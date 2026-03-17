@@ -142,6 +142,11 @@ export const TRANSFER_PHASE_LABELS: Record<TransferPhase, string> = {
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
+/** Returns true if the given Sitecore item path is under the Media Library. */
+export function isMediaPath(itemPath: string): boolean {
+  return itemPath.toLowerCase().startsWith("/sitecore/media library");
+}
+
 export type StatusColorScheme = "neutral" | "primary" | "success" | "danger" | "warning";
 
 export function getPhaseColorScheme(phase: TransferPhase): StatusColorScheme {

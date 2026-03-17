@@ -8,6 +8,7 @@ import type {
   TransferConfig,
   TransferPhase,
 } from "@/lib/content-transfer";
+import { isMediaPath } from "@/lib/content-transfer";
 import { useCallback, useRef, useState } from "react";
 
 const POLL_INTERVAL_MS = 3000;
@@ -86,7 +87,7 @@ export function useContentTransfer() {
       }
       log("PollStatus", `State=${data.State} ChunkSets=${data.ChunkSetsMetadata?.length ?? 0}`);
       if (data.ChunkSetsMetadata?.length) {
-        setChunkSetsMetadata(data.ChunkSetsMetadata);
+        setChunkSetsMetadata(prev => [...prev, ...data.ChunkSetsMetadata]);
       }
       if (data.State === "Failed") {
         logError("PollStatus", "Packaging failed on source", data);
@@ -133,12 +134,264 @@ export function useContentTransfer() {
             : "Import failed on destination environment"
         );
       }
-      if (blobState === "Completed" || blobState === "OK") {
+      if (blobState === "Completed" || blobState === "OK" || blobState === "Transferred") {
         log("PollBlob", `✓ Blob processed — fileName=${fileName}`);
         return;
       }
     }
     throw new Error("Blob state polling timed out");
+  }
+
+  // ── Single sub-transfer orchestration ────────────────────────────────────
+  // Runs Steps 1–5 for one sub-transfer config.
+  // progressOffset + progressShare define the slice of 0–100 this sub-transfer occupies.
+
+  async function runSingleTransfer(
+    subConfig: TransferConfig,
+    isMedia: boolean,
+    progressOffset: number,
+    progressShare: number,
+    label: string // e.g. "[media]" or "[content]"
+  ): Promise<void> {
+    // ── Step 1: Create transfer on source ──────────────────────────────
+    setPhase("creating");
+    setProgress(progressOffset + Math.round(progressShare * 0.02));
+    log(`Step1${label}`, `Creating transfer on source`, {
+      transferId: subConfig.transferId,
+      sourceContextId: subConfig.sourceContextId,
+      destinationContextId: subConfig.destinationContextId,
+      dataTrees: subConfig.dataTrees,
+      isMedia,
+    });
+
+    const createRes = await client.mutate("xmc.contentTransfer.createContentTransfer", {
+      params: {
+        body: {
+          transferId: subConfig.transferId,
+          configuration: {
+            dataTrees: subConfig.dataTrees,
+          },
+        },
+        query: { sitecoreContextId: subConfig.sourceContextId },
+      },
+    });
+    const createResAny = createRes as unknown as { error?: unknown; data?: unknown };
+    log(`Step1${label}`, `createContentTransfer response`, createResAny);
+    if (createResAny.error) {
+      logError(`Step1${label}`, "createContentTransfer failed", createResAny.error);
+      throw new Error(
+        `createContentTransfer failed: ${JSON.stringify(createResAny.error)}`
+      );
+    }
+    log(`Step1${label}`, `✓ Transfer created on source`);
+
+    if (abortRef.current) throw new Error("Transfer aborted");
+
+    // ── Step 2: Poll until source finishes packaging ───────────────────
+    setPhase("preparing");
+    setProgress(progressOffset + Math.round(progressShare * 0.10));
+    log(`Step2${label}`, `Waiting for source to finish packaging...`);
+
+    const chunkSets = await pollTransferStatus(
+      subConfig.transferId,
+      subConfig.sourceContextId
+    );
+    log(`Step2${label}`, `✓ Packaging complete — chunk sets`, chunkSets);
+
+    // ── Step 3: Transfer all chunks source → destination ──────────────
+    setPhase("transferring");
+
+    const totalChunks = chunkSets.reduce((sum, cs) => sum + cs.ChunkCount, 0);
+    let completedChunks = 0;
+    const transferFileNames: string[] = [];
+    log(`Step3${label}`, `Starting chunk transfer — ${chunkSets.length} chunk set(s), ${totalChunks} total chunk(s), isMedia=${isMedia}`);
+
+    for (const [csIndex, chunkSet] of chunkSets.entries()) {
+      if (abortRef.current) throw new Error("Transfer aborted");
+      log(`Step3${label}`, `Processing chunk set ${csIndex + 1}/${chunkSets.length} — ChunkSetId=${chunkSet.ChunkSetId} ChunkCount=${chunkSet.ChunkCount}`);
+
+      // 3a: Get every chunk from source and save to destination
+      for (let chunkIndex = 0; chunkIndex < chunkSet.ChunkCount; chunkIndex++) {
+        if (abortRef.current) throw new Error("Transfer aborted");
+        log(`Step3${label}`, `  getChunk ${chunkIndex + 1}/${chunkSet.ChunkCount} — chunksetId=${chunkSet.ChunkSetId}`);
+
+        // Read chunk blob from source
+        const chunkRes = await client.query(
+          "xmc.contentTransfer.getChunk",
+          {
+            params: {
+              path: {
+                transferId: subConfig.transferId,
+                chunksetId: chunkSet.ChunkSetId,
+                chunkId: chunkIndex,
+              },
+              query: { sitecoreContextId: subConfig.sourceContextId },
+            },
+          }
+        );
+
+        // client.query() wraps result in QueryResult; actual payload is at .data.data
+        // getChunk returns a Blob (raw .raif protobuf binary).
+        const rawChunkRes = chunkRes?.data as unknown;
+        const chunkBlob = (rawChunkRes as { data?: Blob | File | null })?.data ?? null;
+        log(`Step3${label}`,
+          `  getChunk ${chunkIndex} raw response` +
+          ` type=${chunkBlob ? (chunkBlob instanceof Blob ? `Blob(type="${(chunkBlob as Blob).type}")` : typeof chunkBlob) : "null"}` +
+          ` size=${chunkBlob instanceof Blob ? (chunkBlob as Blob).size : "n/a"}`
+        );
+        if (!chunkBlob) {
+          logError(`Step3${label}`, `getChunk returned empty blob`, rawChunkRes);
+          throw new Error(
+            `Failed to retrieve chunk ${chunkIndex} from chunk set ${chunkSet.ChunkSetId}`
+          );
+        }
+
+        // Send the raw Blob directly — DO NOT convert to ArrayBuffer.
+        // The SDK defines saveChunk with bodySerializer:null and
+        // Content-Type:application/octet-stream, meaning it passes the body
+        // through to fetch without any serialization. ArrayBuffer serialises
+        // to {} through JSON.stringify (loses all data), which is what caused
+        // the server-side "Maximum call stack size exceeded" — Sitecore was
+        // receiving an empty body and its error-handling path recursed.
+        // Sending the Blob directly preserves all bytes correctly.
+        // isMedia must be explicitly passed — omitting the parameter (even though
+        // the API spec marks it optional with default false) causes a 405 error.
+        log(`Step3${label}`, `  saveChunk ${chunkIndex + 1}/${chunkSet.ChunkCount} → dest (Blob size=${(chunkBlob as Blob).size}) isMedia=${isMedia} destCtx=${subConfig.destinationContextId}`);
+        const saveRes = await client.mutate("xmc.contentTransfer.saveChunk", {
+          params: {
+            path: {
+              transferId: subConfig.transferId,
+              chunksetId: chunkSet.ChunkSetId,
+              chunkId: chunkIndex,
+            },
+            body: chunkBlob,
+            query: { sitecoreContextId: subConfig.destinationContextId, isMedia },
+          },
+        });
+        const saveResAny = saveRes as unknown as {
+          error?: unknown;
+          data?: unknown;
+          response?: { status?: number };
+        };
+        log(`Step3${label}`, `  saveChunk response`, saveResAny);
+        if (saveResAny.error) {
+          logError(`Step3${label}`, `saveChunk failed`, saveResAny.error);
+          const httpStatus = saveResAny.response?.status;
+          if (httpStatus === 405) {
+            throw new Error(
+              `saveChunk returned 405 Method Not Allowed (isMedia=${isMedia}). ` +
+              `The destination environment does not support the Content Transfer API (PUT /content/v1/transfers/.../chunks) through the marketplace SDK proxy. ` +
+              `Sitecore support ticket required. Details: source=${subConfig.sourceContextId}, dest=${subConfig.destinationContextId}, error=${JSON.stringify(saveResAny.error)}`
+            );
+          }
+          throw new Error(
+            `saveChunk failed (HTTP ${httpStatus ?? "?"}) for chunk ${chunkIndex} of chunkset ${chunkSet.ChunkSetId}: ${JSON.stringify(saveResAny.error)}`
+          );
+        }
+        log(`Step3${label}`, `  ✓ Chunk ${chunkIndex} saved`);
+
+        completedChunks++;
+        // Map chunk progress into this sub-transfer's share of the overall bar
+        const chunkProgress = Math.round((completedChunks / totalChunks) * (progressShare * 0.50));
+        setProgress(progressOffset + Math.round(progressShare * 0.20) + chunkProgress);
+      }
+
+      // 3b: Signal completion of this chunk set → get assembled file name
+      log(`Step3${label}`, `  completeChunkSetTransfer — chunksetId=${chunkSet.ChunkSetId} destCtx=${subConfig.destinationContextId}`);
+      const completeRes = await client.mutate(
+        "xmc.contentTransfer.completeChunkSetTransfer",
+        {
+          params: {
+            path: {
+              transferId: subConfig.transferId,
+              chunksetId: chunkSet.ChunkSetId,
+            },
+            query: { sitecoreContextId: subConfig.destinationContextId },
+          },
+        }
+      );
+      const completeResAny = completeRes as unknown as {
+        data?: { ContentTransferFileName?: string };
+        error?: unknown;
+      };
+      log(`Step3${label}`, `  completeChunkSetTransfer response`, completeResAny);
+      if (completeResAny.error) {
+        logError(`Step3${label}`, "completeChunkSetTransfer failed", completeResAny.error);
+        throw new Error(
+          `completeChunkSetTransfer failed: ${JSON.stringify(completeResAny.error)}`
+        );
+      }
+      // client.mutate() may surface the JSON body at .data or .data.data
+      // depending on SDK version — check both paths defensively.
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const fileName =
+        completeResAny.data?.ContentTransferFileName ??
+        (completeResAny.data as any)?.data?.ContentTransferFileName;
+      log(`Step3${label}`, `  ContentTransferFileName=${fileName ?? "(empty)"}`);
+      if (!fileName) {
+        logError(`Step3${label}`, "completeChunkSetTransfer returned no ContentTransferFileName", completeResAny);
+        throw new Error(
+          "completeChunkSetTransfer did not return a ContentTransferFileName"
+        );
+      }
+      log(`Step3${label}`, `  ✓ Chunk set ${csIndex + 1} assembled — fileName=${fileName}`);
+
+      // 3c: Kick off import of this chunk set's assembled file on destination
+      // consumeFile requires a schema-prefixed fileName: blob:// for media, file:// for content
+      const consumeFileName = isMedia ? `blob://${fileName}` : `file://${fileName}`;
+      log(`Step3${label}`, `  consumeFile — fileName=${consumeFileName} destCtx=${subConfig.destinationContextId}`);
+      const consumeRes = await client.query("xmc.contentTransfer.consumeFile", {
+        params: {
+          query: {
+            databaseName: "master",
+            fileName: consumeFileName,
+            sitecoreContextId: subConfig.destinationContextId,
+          },
+        },
+      });
+      const consumeResAny = (consumeRes?.data as unknown as { error?: unknown } | undefined);
+      log(`Step3${label}`, `  consumeFile response`, consumeResAny);
+      if (consumeResAny?.error) {
+        logError(`Step3${label}`, "consumeFile failed", consumeResAny.error);
+        throw new Error(
+          `consumeFile failed: ${JSON.stringify(consumeResAny.error)}`
+        );
+      }
+      log(`Step3${label}`, `  ✓ consumeFile queued for import`);
+
+      // getBlobState uses the raw filename (without schema prefix)
+      transferFileNames.push(fileName);
+    }
+
+    // ── Step 4: Poll getBlobState for ALL files after all sets complete ──
+    setPhase("importing");
+    setProgress(progressOffset + Math.round(progressShare * 0.75));
+    log(`Step4${label}`, `Polling blob state for ${transferFileNames.length} file(s)`, transferFileNames);
+
+    for (const fileName of transferFileNames) {
+      if (abortRef.current) throw new Error("Transfer aborted");
+      await pollBlobState(fileName, subConfig.destinationContextId);
+    }
+    log(`Step4${label}`, `✓ All blobs processed`);
+    setProgress(progressOffset + Math.round(progressShare * 0.90));
+
+    // ── Step 5: Delete transfer from BOTH environments ────────────────
+    log(`Step5${label}`, `Deleting transfer from source — transferId=${subConfig.transferId}`);
+    await client.mutate("xmc.contentTransfer.deleteContentTransfer", {
+      params: {
+        path: { transferId: subConfig.transferId },
+        query: { sitecoreContextId: subConfig.sourceContextId },
+      },
+    });
+    log(`Step5${label}`, `Deleting transfer from destination — transferId=${subConfig.transferId}`);
+    await client.mutate("xmc.contentTransfer.deleteContentTransfer", {
+      params: {
+        path: { transferId: subConfig.transferId },
+        query: { sitecoreContextId: subConfig.destinationContextId },
+      },
+    }).catch((e) => { logWarn(`Step5${label}`, "Destination cleanup failed (ignored — destination may not have a record)", e); });
+
+    log(`Done${label}`, `✓ Sub-transfer complete — transferId=${subConfig.transferId}`);
   }
 
   // ── Main orchestration ────────────────────────────────────────────────────
@@ -156,240 +409,35 @@ export function useContentTransfer() {
       setTransferId(config.transferId);
 
       try {
-        // ── Step 1: Create transfer on source ──────────────────────────────
-        setPhase("creating");
-        setProgress(2);
-        log("Step1", `Creating transfer on source`, {
-          transferId: config.transferId,
-          sourceContextId: config.sourceContextId,
-          destinationContextId: config.destinationContextId,
-          dataTrees: config.dataTrees,
-        });
+        // Split dataTrees into media and content groups
+        const mediaTrees = config.dataTrees.filter(dt => isMediaPath(dt.itemPath));
+        const contentTrees = config.dataTrees.filter(dt => !isMediaPath(dt.itemPath));
 
-        const createRes = await client.mutate("xmc.contentTransfer.createContentTransfer", {
-          params: {
-            body: {
-              transferId: config.transferId,
-              configuration: {
-                dataTrees: config.dataTrees,
-              },
-            },
-            query: { sitecoreContextId: config.sourceContextId },
-          },
-        });
-        const createResAny = createRes as unknown as { error?: unknown; data?: unknown };
-        log("Step1", `createContentTransfer response`, createResAny);
-        if (createResAny.error) {
-          logError("Step1", "createContentTransfer failed", createResAny.error);
-          throw new Error(
-            `createContentTransfer failed: ${JSON.stringify(createResAny.error)}`
-          );
-        }
-        log("Step1", `✓ Transfer created on source`);
-
-        if (abortRef.current) throw new Error("Transfer aborted");
-
-        // ── Step 2: Poll until source finishes packaging ───────────────────
-        setPhase("preparing");
-        setProgress(10);
-        log("Step2", `Waiting for source to finish packaging...`);
-
-        const chunkSets = await pollTransferStatus(
-          config.transferId,
-          config.sourceContextId
-        );
-        log("Step2", `✓ Packaging complete — chunk sets`, chunkSets);
-
-        // ── Step 3: Transfer all chunks source → destination ──────────────
-        // Per article: for each chunk set, get every chunk from source and save
-        // to destination, then call completeChunkSetTransfer + consumeFile.
-        // Collect all returned filenames; poll getBlobState AFTER all sets finish.
-        setPhase("transferring");
-
-        const totalChunks = chunkSets.reduce((sum, cs) => sum + cs.ChunkCount, 0);
-        let completedChunks = 0;
-        const transferFileNames: string[] = [];
-        log("Step3", `Starting chunk transfer — ${chunkSets.length} chunk set(s), ${totalChunks} total chunk(s)`);
-
-        for (const [csIndex, chunkSet] of chunkSets.entries()) {
-          if (abortRef.current) throw new Error("Transfer aborted");
-          log("Step3", `Processing chunk set ${csIndex + 1}/${chunkSets.length} — ChunkSetId=${chunkSet.ChunkSetId} ChunkCount=${chunkSet.ChunkCount}`);
-
-          // 3a: Get every chunk from source and save to destination
-          for (let chunkIndex = 0; chunkIndex < chunkSet.ChunkCount; chunkIndex++) {
-            if (abortRef.current) throw new Error("Transfer aborted");
-            log("Step3", `  getChunk ${chunkIndex + 1}/${chunkSet.ChunkCount} — chunksetId=${chunkSet.ChunkSetId}`);
-
-            // Read chunk blob from source
-            const chunkRes = await client.query(
-              "xmc.contentTransfer.getChunk",
-              {
-                params: {
-                  path: {
-                    transferId: config.transferId,
-                    chunksetId: chunkSet.ChunkSetId,
-                    chunkId: chunkIndex,
-                  },
-                  query: { sitecoreContextId: config.sourceContextId },
-                },
-              }
-            );
-
-            // client.query() wraps result in QueryResult; actual payload is at .data.data
-            // getChunk returns a Blob (raw .raif protobuf binary).
-            const rawChunkRes = chunkRes?.data as unknown;
-            const chunkBlob = (rawChunkRes as { data?: Blob | File | null })?.data ?? null;
-            log("Step3",
-              `  getChunk ${chunkIndex} raw response` +
-              ` type=${chunkBlob ? (chunkBlob instanceof Blob ? `Blob(type="${(chunkBlob as Blob).type}")` : typeof chunkBlob) : "null"}` +
-              ` size=${chunkBlob instanceof Blob ? (chunkBlob as Blob).size : "n/a"}`
-            );
-            if (!chunkBlob) {
-              logError("Step3", `getChunk returned empty blob`, rawChunkRes);
-              throw new Error(
-                `Failed to retrieve chunk ${chunkIndex} from chunk set ${chunkSet.ChunkSetId}`
-              );
-            }
-
-            // Send the raw Blob directly — DO NOT convert to ArrayBuffer.
-            // The SDK defines saveChunk with bodySerializer:null and
-            // Content-Type:application/octet-stream, meaning it passes the body
-            // through to fetch without any serialization. ArrayBuffer serialises
-            // to {} through JSON.stringify (loses all data), which is what caused
-            // the server-side "Maximum call stack size exceeded" — Sitecore was
-            // receiving an empty body and its error-handling path recursed.
-            // Sending the Blob directly preserves all bytes correctly.
-            log("Step3", `  saveChunk ${chunkIndex + 1}/${chunkSet.ChunkCount} → dest (Blob size=${(chunkBlob as Blob).size}) destCtx=${config.destinationContextId}`);
-            const saveRes = await client.mutate("xmc.contentTransfer.saveChunk", {
-              params: {
-                path: {
-                  transferId: config.transferId,
-                  chunksetId: chunkSet.ChunkSetId,
-                  chunkId: chunkIndex,
-                },
-                body: chunkBlob,
-                query: { sitecoreContextId: config.destinationContextId },
-              },
-            });
-            const saveResAny = saveRes as unknown as {
-              error?: unknown;
-              data?: unknown;
-              response?: { status?: number };
-            };
-            log("Step3", `  saveChunk response`, saveResAny);
-            if (saveResAny.error) {
-              logError("Step3", `saveChunk failed`, saveResAny.error);
-              const httpStatus = saveResAny.response?.status;
-              if (httpStatus === 405) {
-                throw new Error(
-                  `saveChunk returned 405 Method Not Allowed. ` +
-                  `The destination environment does not support the Content Transfer API (PUT /content/v1/transfers/.../chunks) through the marketplace SDK proxy. ` +
-                  `Sitecore support ticket required. Details: source=${config.sourceContextId}, dest=${config.destinationContextId}, error=${JSON.stringify(saveResAny.error)}`
-                );
-              }
-              throw new Error(
-                `saveChunk failed (HTTP ${httpStatus ?? "?"}) for chunk ${chunkIndex} of chunkset ${chunkSet.ChunkSetId}: ${JSON.stringify(saveResAny.error)}`
-              );
-            }
-            log("Step3", `  ✓ Chunk ${chunkIndex} saved`);
-
-            completedChunks++;
-            setProgress(20 + Math.round((completedChunks / totalChunks) * 50));
-          }
-
-          // 3b: Signal completion of this chunk set → get assembled file name
-          log("Step3", `  completeChunkSetTransfer — chunksetId=${chunkSet.ChunkSetId} destCtx=${config.destinationContextId}`);
-          const completeRes = await client.mutate(
-            "xmc.contentTransfer.completeChunkSetTransfer",
-            {
-              params: {
-                path: {
-                  transferId: config.transferId,
-                  chunksetId: chunkSet.ChunkSetId,
-                },
-                query: { sitecoreContextId: config.destinationContextId },
-              },
-            }
-          );
-          const completeResAny = completeRes as unknown as {
-            data?: { ContentTransferFileName?: string };
-            error?: unknown;
-          };
-          log("Step3", `  completeChunkSetTransfer response`, completeResAny);
-          if (completeResAny.error) {
-            logError("Step3", "completeChunkSetTransfer failed", completeResAny.error);
-            throw new Error(
-              `completeChunkSetTransfer failed: ${JSON.stringify(completeResAny.error)}`
-            );
-          }
-          // client.mutate() may surface the JSON body at .data or .data.data
-          // depending on SDK version — check both paths defensively.
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          const fileName =
-            completeResAny.data?.ContentTransferFileName ??
-            (completeResAny.data as any)?.data?.ContentTransferFileName;
-          log("Step3", `  ContentTransferFileName=${fileName ?? "(empty)"}`);
-          if (!fileName) {
-            logError("Step3", "completeChunkSetTransfer returned no ContentTransferFileName", completeResAny);
-            throw new Error(
-              "completeChunkSetTransfer did not return a ContentTransferFileName"
-            );
-          }
-          log("Step3", `  ✓ Chunk set ${csIndex + 1} assembled — fileName=${fileName}`);
-
-          // 3c: Kick off import of this chunk set's assembled file on destination
-          log("Step3", `  consumeFile — fileName=${fileName} destCtx=${config.destinationContextId}`);
-          const consumeRes = await client.query("xmc.contentTransfer.consumeFile", {
-            params: {
-              query: {
-                databaseName: "master",
-                fileName,
-                sitecoreContextId: config.destinationContextId,
-              },
-            },
+        const subTransfers: Array<{ subConfig: TransferConfig; isMedia: boolean; label: string }> = [];
+        if (mediaTrees.length > 0) {
+          subTransfers.push({
+            subConfig: { ...config, transferId: crypto.randomUUID(), dataTrees: mediaTrees },
+            isMedia: true,
+            label: "[media]",
           });
-          const consumeResAny = (consumeRes?.data as unknown as { error?: unknown } | undefined);
-          log("Step3", `  consumeFile response`, consumeResAny);
-          if (consumeResAny?.error) {
-            logError("Step3", "consumeFile failed", consumeResAny.error);
-            throw new Error(
-              `consumeFile failed: ${JSON.stringify(consumeResAny.error)}`
-            );
-          }
-          log("Step3", `  ✓ consumeFile queued for import`);
-
-          transferFileNames.push(fileName);
+        }
+        if (contentTrees.length > 0) {
+          subTransfers.push({
+            subConfig: { ...config, dataTrees: contentTrees },
+            isMedia: false,
+            label: contentTrees.length < config.dataTrees.length ? "[content]" : "",
+          });
         }
 
-        // ── Step 4: Poll getBlobState for ALL files after all sets complete ──
-        // Per article: collect all filenames first, then poll each one.
-        setPhase("importing");
-        setProgress(75);
-        log("Step4", `Polling blob state for ${transferFileNames.length} file(s)`, transferFileNames);
+        log("Start", `Transfer split — ${mediaTrees.length} media tree(s), ${contentTrees.length} content tree(s), ${subTransfers.length} sub-transfer(s)`);
 
-        for (const fileName of transferFileNames) {
+        const progressShare = Math.floor(100 / subTransfers.length);
+
+        for (const [i, { subConfig, isMedia, label }] of subTransfers.entries()) {
           if (abortRef.current) throw new Error("Transfer aborted");
-          await pollBlobState(fileName, config.destinationContextId);
+          const progressOffset = i * progressShare;
+          await runSingleTransfer(subConfig, isMedia, progressOffset, progressShare, label);
         }
-        log("Step4", `✓ All blobs processed`);
-        setProgress(90);
-
-        // ── Step 5: Delete transfer from BOTH environments ────────────────
-        // Per article: "delete transfers on both source and target".
-        log("Step5", `Deleting transfer from source — transferId=${config.transferId}`);
-        await client.mutate("xmc.contentTransfer.deleteContentTransfer", {
-          params: {
-            path: { transferId: config.transferId },
-            query: { sitecoreContextId: config.sourceContextId },
-          },
-        });
-        log("Step5", `Deleting transfer from destination — transferId=${config.transferId}`);
-        await client.mutate("xmc.contentTransfer.deleteContentTransfer", {
-          params: {
-            path: { transferId: config.transferId },
-            query: { sitecoreContextId: config.destinationContextId },
-          },
-        }).catch((e) => { logWarn("Step5", "Destination cleanup failed (ignored — destination may not have a record)", e); });
 
         setProgress(100);
         setPhase("completed");
@@ -408,6 +456,7 @@ export function useContentTransfer() {
         isRunningRef.current = false;
       }
     },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     [client]
   );
 
