@@ -29,6 +29,9 @@ interface ItemPathInputProps {
   sourceContextId?: string | null;
   /** Preview context ID of the selected destination environment for the comparison pane */
   destinationContextId?: string | null;
+  /** Human-readable environment names forwarded to the tree picker dialog */
+  sourceEnvName?: string;
+  destinationEnvName?: string;
 }
 
 const DEFAULT_ITEM: DataTreeItem = {
@@ -43,6 +46,8 @@ export function ItemPathInput({
   disabled = false,
   sourceContextId = null,
   destinationContextId = null,
+  sourceEnvName,
+  destinationEnvName,
 }: ItemPathInputProps) {
   // Track which row has the tree picker open (-1 = none)
   const [openPickerForIndex, setOpenPickerForIndex] = useState<number>(-1);
@@ -206,6 +211,8 @@ export function ItemPathInput({
             }}
             sourceContextId={sourceContextId}
             destinationContextId={destinationContextId}
+            sourceEnvName={sourceEnvName}
+            destinationEnvName={destinationEnvName}
             existingPaths={existingPaths}
             onSelect={(path) => handleTreeSelect(index, path)}
           />

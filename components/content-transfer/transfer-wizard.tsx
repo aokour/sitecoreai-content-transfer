@@ -150,6 +150,21 @@ export function TransferWizard({
       {/* Stepper */}
       <Stepper steps={STEPS} currentStep={currentStep} />
 
+      {/* Persistent environment route — visible on steps 1–3 */}
+      {currentStep > 0 && sourceEnv && destEnv && (
+        <div className="flex items-center gap-3 rounded-lg border bg-muted/40 px-4 py-2.5 text-sm">
+          <div className="flex items-center gap-1.5 min-w-0">
+            <span className="text-xs text-muted-foreground shrink-0">From</span>
+            <span className="font-medium truncate">{getEnvironmentLabel(sourceEnv)}</span>
+          </div>
+          <ArrowRight className="size-3.5 text-muted-foreground shrink-0" />
+          <div className="flex items-center gap-1.5 min-w-0">
+            <span className="text-xs text-muted-foreground shrink-0">To</span>
+            <span className="font-medium truncate">{getEnvironmentLabel(destEnv)}</span>
+          </div>
+        </div>
+      )}
+
       {/* Step content */}
       <Card>
         {/* ── Step 0: Environments ─────────────────────────────────────── */}
@@ -218,6 +233,8 @@ export function TransferWizard({
                 onChange={setDataTrees}
                 sourceContextId={sourceId}
                 destinationContextId={destinationId}
+                sourceEnvName={sourceEnv ? getEnvironmentLabel(sourceEnv) : undefined}
+                destinationEnvName={destEnv ? getEnvironmentLabel(destEnv) : undefined}
               />
             </CardContent>
           </>

@@ -51,8 +51,9 @@ npm install @sitecore-marketplace-sdk/xmc
 
 # Current versions:
 # @sitecore-marketplace-sdk/client: v0.3.2
-# @sitecore-marketplace-sdk/xmc: v0.4.0
-# @sitecore-marketplace-sdk/core: v0.3.2
+# @sitecore-marketplace-sdk/xmc: v0.4.1
+# @sitecore-marketplace-sdk/core: v0.3.3 latest standalone package
+# Note: @sitecore-marketplace-sdk/client manages its own transitive core version.
 ```
 
 ## Sitecore Blok Design System
@@ -534,7 +535,8 @@ enum AllowedExtensionPoints {
 **Purpose**: XM Cloud-specific API integrations
 
 - Authoring and Management GraphQL API
-- XM Apps REST API
+- Pages API for managing site pages in SitecoreAI
+- Sites API for managing site collections, sites, languages, and background jobs
 - Experience Edge Token API
 - Experience Edge Admin API
 
@@ -543,7 +545,7 @@ enum AllowedExtensionPoints {
 - `XMC` - Main module for XM Cloud integration
 - Generated TypeScript types for all XM Cloud APIs
 - Augmentation modules for extending the base client SDK
-- Operation-specific client modules (authoring, content, content-transfer, xmapp)
+- Operation-specific client modules for authoring, pages, sites, content transfer, and agent APIs
 
 **When to Use**: When your app needs to interact with XM Cloud services.
 
@@ -2848,9 +2850,10 @@ const asset = await xmc.agent.assetsUploadAsset({
 #### Next.js API Route Example
 
 ```typescript
-// pages/api/sites.ts
+// app/api/sites/route.ts
+import { NextResponse } from 'next/server';
 import { experimental_createXMCClient } from '@sitecore-marketplace-sdk/xmc';
-import type { NextApiRequest, NextApiResponse } from 'next';
+import { auth0 } from '@/lib/auth0';
 
 // Create XMC client instance
 let xmcClient: Awaited<ReturnType<typeof experimental_createXMCClient>> | null = null;
@@ -2859,28 +2862,38 @@ async function getXMCClient() {
   if (!xmcClient) {
     xmcClient = await experimental_createXMCClient({
       getAccessToken: async () => {
-        // Implement your token retrieval logic
-        return process.env.XMC_ACCESS_TOKEN!;
+        const { token: accessToken } = await auth0.getAccessToken();
+        return accessToken;
       },
     });
   }
   return xmcClient;
 }
 
-export default async function handler(req: NextApiRequest, res: NextApiResponse) {
+export async function GET(request: Request) {
   try {
+    const session = await auth0.getSession();
+    if (!session) {
+      return NextResponse.json({ error: 'Not authenticated' }, { status: 401 });
+    }
+
     const xmc = await getXMCClient();
-    const contextId = req.query.contextId as string;
+    const { searchParams } = new URL(request.url);
+    const contextId = searchParams.get('contextId');
+
+    if (!contextId) {
+      return NextResponse.json({ error: 'Missing contextId' }, { status: 400 });
+    }
 
     // Fetch sites using XMC client
     const sites = await xmc.sites.listSites({
       query: { sitecoreContextId: contextId },
     });
 
-    res.status(200).json({ sites });
+    return NextResponse.json(sites.data);
   } catch (error) {
     console.error('Error fetching sites:', error);
-    res.status(500).json({ error: 'Failed to fetch sites' });
+    return NextResponse.json({ error: 'Failed to fetch sites' }, { status: 500 });
   }
 }
 ```
@@ -4113,10 +4126,12 @@ npm install @sitecore-marketplace-sdk/xmc
 | Package                       | Current Version | Sitecore XM Cloud | Node.js | TypeScript |
 | ----------------------------- | --------------- | ----------------- | ------- | ---------- |
 | @sitecore-marketplace-sdk/client | 0.3.2        | Latest            | 16+     | 5.0+       |
-| @sitecore-marketplace-sdk/xmc    | 0.4.0        | Latest            | 16+     | 5.0+       |
-| @sitecore-marketplace-sdk/core   | 0.3.2        | Latest            | 16+     | 5.0+       |
+| @sitecore-marketplace-sdk/xmc    | 0.4.1        | Latest            | 16+     | 5.0+       |
+| @sitecore-marketplace-sdk/core   | 0.3.3        | Latest            | 16+     | 5.0+       |
 
 **Version History**:
+- **v0.4.1 (XMC)**: Current XMC release; retains the `xmc.sites` and `xmc.pages` APIs and declares `@sitecore-marketplace-sdk/client` `^0.3.2` as a peer dependency
+- **v0.3.3 (Core)**: Latest standalone core package release. Marketplace apps normally consume core through `@sitecore-marketplace-sdk/client`
 - **v0.4.0 (XMC)**: Deprecated `xmc.xmapps` namespace, added new `xmc.pages` and `xmc.sites` namespaces for Pages and Sites APIs
 - **v0.3.2 (Client)**: Updated core dependency to fix vulnerability issues
 - **v0.3.2 (Core)**: Fixed vulnerabilities found in dependencies

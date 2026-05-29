@@ -1,6 +1,5 @@
 "use client";
 
-import { useAppContext } from "@/components/providers/marketplace";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -8,14 +7,10 @@ import {
   CardContent,
   CardDescription,
   CardHeader,
-  CardTitle,
 } from "@/components/ui/card";
-import { Separator } from "@/components/ui/separator";
-import { EnvironmentSelector } from "@/components/content-transfer/environment-selector";
 import { TransferList } from "@/components/content-transfer/transfer-list";
 import { useContentTransfer } from "@/hooks/use-content-transfer";
 import { useTransferHistory } from "@/hooks/use-transfer-history";
-import type { ResourceAccessEntry } from "@/lib/content-transfer";
 import {
   ArrowRight,
   CheckCircle2,
@@ -24,43 +19,15 @@ import {
   Layers,
   Plus,
 } from "lucide-react";
-import { useRouter } from "next/navigation";
-import { useMemo, useState } from "react";
+import Link from "next/link";
 
 export default function Dashboard() {
-  const router = useRouter();
-  const appContext = useAppContext();
   const { transfers, removeTransfer, stats } = useTransferHistory();
   const { deleteTransfer } = useContentTransfer();
 
-  // Environment selection persisted in component state
-  const [sourceId, setSourceId] = useState<string | null>(null);
-  const [destinationId, setDestinationId] = useState<string | null>(null);
-
-  const environments = useMemo((): ResourceAccessEntry[] => {
-    // The SDK returns data in `resourceAccess` (preferred) or `resources` (legacy).
-    // In real responses tenantName may be null — use tenantDisplayName instead.
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const raw: any[] = appContext?.resourceAccess?.length
-      ? appContext.resourceAccess
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      : (appContext as any)?.resources ?? [];
-    return raw as ResourceAccessEntry[];
-  }, [appContext]);
-
-  const canCreateTransfer = !!sourceId && !!destinationId && sourceId !== destinationId;
-
   async function handleDelete(transferId: string, sourceContextId: string) {
-    // Best-effort API deletion + remove from history
     await deleteTransfer(transferId, sourceContextId);
     removeTransfer(transferId);
-  }
-
-  function handleNewTransfer() {
-    const params = new URLSearchParams();
-    if (sourceId) params.set("source", sourceId);
-    if (destinationId) params.set("destination", destinationId);
-    router.push(`/transfer/new?${params.toString()}`);
   }
 
   return (
@@ -81,46 +48,21 @@ export default function Dashboard() {
               </p>
             </div>
           </div>
-          <Badge colorScheme="primary" size="sm">
-            Standalone
-          </Badge>
+          <div className="flex items-center gap-3">
+            <Button size="sm" asChild>
+              <Link href="/transfer/new">
+                <Plus className="size-4 mr-2" />
+                New Transfer
+              </Link>
+            </Button>
+            <Badge colorScheme="primary" size="sm">
+              Standalone
+            </Badge>
+          </div>
         </div>
       </div>
 
       <div className="container mx-auto px-6 py-8 max-w-7xl space-y-8">
-        {/* Environment selector */}
-        <div className="space-y-2">
-          <div className="flex items-center justify-between">
-            <div>
-              <h2 className="text-base font-semibold">Environments</h2>
-              <p className="text-sm text-muted-foreground">
-                Select the source and destination environments for your transfer.
-              </p>
-            </div>
-            <Button
-              onClick={handleNewTransfer}
-              disabled={!canCreateTransfer}
-              size="sm"
-            >
-              <Plus className="size-4 mr-2" />
-              New Transfer
-            </Button>
-          </div>
-          <EnvironmentSelector
-            environments={environments}
-            sourceId={sourceId}
-            destinationId={destinationId}
-            onSourceChange={setSourceId}
-            onDestinationChange={setDestinationId}
-          />
-          {!canCreateTransfer && (environments.length > 0) && (
-            <p className="text-xs text-muted-foreground">
-              Select different source and destination environments to enable transfers.
-            </p>
-          )}
-        </div>
-
-        <Separator />
 
         {/* Stats */}
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">

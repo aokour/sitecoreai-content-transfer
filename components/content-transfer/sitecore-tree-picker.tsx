@@ -25,6 +25,9 @@ interface SitecoreTreePickerProps {
   onOpenChange: (open: boolean) => void;
   sourceContextId: string | null;
   destinationContextId: string | null;
+  /** Human-readable names shown in the column headers */
+  sourceEnvName?: string;
+  destinationEnvName?: string;
   /** Paths already added to the transfer list */
   existingPaths?: string[];
   onSelect: (path: string) => void;
@@ -35,6 +38,8 @@ export function SitecoreTreePicker({
   onOpenChange,
   sourceContextId,
   destinationContextId,
+  sourceEnvName,
+  destinationEnvName,
   onSelect,
 }: SitecoreTreePickerProps) {
   const [pendingNode, setPendingNode] = useState<DualTreeNode | null>(null);
@@ -118,11 +123,21 @@ export function SitecoreTreePicker({
                 <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
                   Source
                 </p>
+                {sourceEnvName && (
+                  <p className="text-xs font-medium text-foreground mt-0.5 truncate">
+                    {sourceEnvName}
+                  </p>
+                )}
               </div>
               <div className="px-4 py-2 bg-muted/20">
                 <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
                   Destination
                 </p>
+                {destinationEnvName && (
+                  <p className="text-xs font-medium text-foreground mt-0.5 truncate">
+                    {destinationEnvName}
+                  </p>
+                )}
               </div>
             </div>
 
