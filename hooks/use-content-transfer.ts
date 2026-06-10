@@ -417,19 +417,20 @@ export function useContentTransfer() {
       );
 
       // 3c: Kick off import of this chunk set's assembled file on destination
-      // consumeFile requires a schema-prefixed fileName: blob:// for media, file:// for content
-      const consumeFileName = isMedia
-        ? `blob://${fileName}`
-        : `file://${fileName}`;
+      // /items/v2/ConsumeFile requires a schema prefix: file:// for content, blob:// for media.
+      const consumeFileName = isMedia ? `blob://${fileName}` : `file://${fileName}`;
       log(
         `Step3${label}`,
         `  consumeFile — fileName=${consumeFileName} destCtx=${subConfig.destinationContextId}`,
       );
-      // Retry consumeFile: completeChunkSetTransfer returns before the server finishes
-      // assembling the file, so the first attempt may get "File does not exist".
+      // completeChunkSetTransfer triggers async server-side file assembly and returns
+      // immediately — the .raif file may not exist yet when consumeFile is first called.
+      // Wait one full poll interval before the first attempt, then retry with backoff.
       {
-        const MAX_CONSUME_ATTEMPTS = 3;
+        const MAX_CONSUME_ATTEMPTS = 10;
         let consumed = false;
+        // Initial delay: give the server time to finish assembling before the first call.
+        await sleep(POLL_INTERVAL_MS);
         for (let attempt = 1; attempt <= MAX_CONSUME_ATTEMPTS; attempt++) {
           if (attempt > 1) await sleep(POLL_INTERVAL_MS);
           if (abortRef.current) throw new Error("Transfer aborted");
@@ -457,10 +458,7 @@ export function useContentTransfer() {
             const msg =
               consumeResAny.error.Message ??
               JSON.stringify(consumeResAny.error);
-            if (
-              attempt < MAX_CONSUME_ATTEMPTS &&
-              msg.toLowerCase().includes("does not exist")
-            ) {
+            if (msg.toLowerCase().includes("does not exist")) {
               logWarn(
                 `Step3${label}`,
                 `  consumeFile — file not ready yet, retrying (${attempt}/${MAX_CONSUME_ATTEMPTS})`,
@@ -483,12 +481,11 @@ export function useContentTransfer() {
         }
         if (!consumed)
           throw new Error(
-            `consumeFile: file not ready after ${MAX_CONSUME_ATTEMPTS} attempts — ${consumeFileName}`,
+            `consumeFile: file not ready after ${MAX_CONSUME_ATTEMPTS} attempts (~${Math.round((MAX_CONSUME_ATTEMPTS + 1) * POLL_INTERVAL_MS / 1000)}s) — ${consumeFileName}`,
           );
       }
 
-      // getBlobState uses the raw filename (without schema prefix)
-      transferFileNames.push(fileName);
+      transferFileNames.push(consumeFileName);
     }
 
     // ── Step 4: Poll getBlobState for ALL files after all sets complete ──

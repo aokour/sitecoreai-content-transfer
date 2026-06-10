@@ -13,6 +13,8 @@ export interface DualTreeNode {
   /** true if EITHER side reports children */
   hasChildren: boolean;
   template?: { name: string };
+  /** Icon URL from Sitecore — use transformIconUrl() before rendering */
+  icon?: string;
   existsInSource: boolean;
   existsInDestination: boolean;
   /** ISO string from the source __Updated field */
@@ -37,6 +39,7 @@ interface RawTreeNode {
   path: string;
   hasChildren: boolean;
   template?: { name: string };
+  icon?: string;
   updated?: { value: string } | null;
   updatedBy?: { value: string } | null;
   revision?: { value: string } | null;
@@ -55,19 +58,14 @@ interface GraphQLItemResponse {
 
 const GET_CHILDREN_WITH_META = /* GraphQL */ `
   query GetSitecoreItemsDual($path: String!, $systemLocale: String!) {
-    item(
-      where: {
-        database: "master"
-        path: $path
-        language: $systemLocale
-      }
-    ) {
+    item(where: { database: "master", path: $path, language: $systemLocale }) {
       children {
         nodes {
           itemId
           name
           hasChildren
           path
+          icon
           template {
             name
           }
@@ -86,11 +84,22 @@ const GET_CHILDREN_WITH_META = /* GraphQL */ `
   }
 `;
 
+// ── Icon URL transform ─────────────────────────────────────────────────────
+// Sitecore's GraphQL returns /-/icon/ URLs which are redirect aliases;
+// the actual browser-accessible path uses /temp/iconcache/.
+
+export function transformIconUrl(url: string): string {
+  return url
+    .replace("/-/icon/", "/temp/iconcache/")
+    .replace("/32x32/", "/16x16/")
+    .toLowerCase();
+}
+
 // ── Merge helpers ──────────────────────────────────────────────────────────
 
 function mergeNodes(
   sourceNodes: RawTreeNode[],
-  destNodes: RawTreeNode[]
+  destNodes: RawTreeNode[],
 ): DualTreeNode[] {
   const byPath = new Map<string, DualTreeNode>();
 
@@ -101,6 +110,7 @@ function mergeNodes(
       path: n.path,
       hasChildren: n.hasChildren,
       template: n.template,
+      icon: n.icon,
       existsInSource: true,
       existsInDestination: false,
       sourceUpdated: n.updated?.value,
@@ -138,6 +148,7 @@ function mergeNodes(
         path: n.path,
         hasChildren: n.hasChildren,
         template: n.template,
+        icon: n.icon,
         existsInSource: false,
         existsInDestination: true,
         destUpdated: n.updated?.value,
@@ -151,8 +162,10 @@ function mergeNodes(
   // Sort: items that exist on both sides first, then source-only, then dest-only;
   // within each group sort alphabetically by name.
   return [...byPath.values()].sort((a, b) => {
-    const aScore = a.existsInSource && a.existsInDestination ? 0 : a.existsInSource ? 1 : 2;
-    const bScore = b.existsInSource && b.existsInDestination ? 0 : b.existsInSource ? 1 : 2;
+    const aScore =
+      a.existsInSource && a.existsInDestination ? 0 : a.existsInSource ? 1 : 2;
+    const bScore =
+      b.existsInSource && b.existsInDestination ? 0 : b.existsInSource ? 1 : 2;
     if (aScore !== bScore) return aScore - bScore;
     return a.name.localeCompare(b.name);
   });
@@ -162,13 +175,13 @@ function mergeNodes(
 
 export function useDualTree(
   sourceContextId: string | null,
-  destinationContextId: string | null
+  destinationContextId: string | null,
 ) {
   const client = useMarketplaceClient();
 
   // Map<path, DualTreeNode[]> — merged children per parent path
   const [childrenMap, setChildrenMap] = useState<Map<string, DualTreeNode[]>>(
-    new Map()
+    new Map(),
   );
   // Set of paths currently being fetched
   const [loadingPaths, setLoadingPaths] = useState<Set<string>>(new Set());
@@ -212,9 +225,13 @@ export function useDualTree(
         ]);
 
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const srcData = (srcRes?.data as any)?.data as GraphQLItemResponse | undefined;
+        const srcData = (srcRes?.data as any)?.data as
+          | GraphQLItemResponse
+          | undefined;
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const dstData = (dstRes?.data as any)?.data as GraphQLItemResponse | undefined;
+        const dstData = (dstRes?.data as any)?.data as
+          | GraphQLItemResponse
+          | undefined;
 
         const srcNodes: RawTreeNode[] = srcData?.item?.children?.nodes ?? [];
         const dstNodes: RawTreeNode[] = dstData?.item?.children?.nodes ?? [];
@@ -231,7 +248,7 @@ export function useDualTree(
           const next = new Map(prev);
           next.set(
             path,
-            err instanceof Error ? err.message : "Failed to load children"
+            err instanceof Error ? err.message : "Failed to load children",
           );
           return next;
         });
@@ -243,27 +260,29 @@ export function useDualTree(
         });
       }
     },
-    [client, sourceContextId, destinationContextId]
+    [client, sourceContextId, destinationContextId],
   );
 
   const getDualChildren = useCallback(
     (path: string): DualTreeNode[] | undefined => childrenMap.get(path),
-    [childrenMap]
+    [childrenMap],
   );
 
   const expandNode = useCallback(
-    (path: string) => { fetchChildren(path); },
-    [fetchChildren]
+    (path: string) => {
+      fetchChildren(path);
+    },
+    [fetchChildren],
   );
 
   const isLoadingPath = useCallback(
     (path: string) => loadingPaths.has(path),
-    [loadingPaths]
+    [loadingPaths],
   );
 
   const getError = useCallback(
     (path: string) => errorMap.get(path) ?? null,
-    [errorMap]
+    [errorMap],
   );
 
   return { getDualChildren, expandNode, isLoadingPath, getError };

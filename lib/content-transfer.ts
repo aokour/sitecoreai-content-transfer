@@ -179,3 +179,24 @@ export function isTransferActive(phase: TransferPhase): boolean {
 export function generateTransferId(): string {
   return crypto.randomUUID();
 }
+
+/**
+ * Returns a Map<coveredIndex, coveringIndex> for items where one entry's path
+ * is a descendant of another entry that has ItemAndDescendants scope.
+ */
+export function findOverlaps(items: DataTreeItem[]): Map<number, number> {
+  const covered = new Map<number, number>();
+  for (let i = 0; i < items.length; i++) {
+    for (let j = 0; j < items.length; j++) {
+      if (i === j) continue;
+      if (
+        items[j].scope === "ItemAndDescendants" &&
+        items[i].itemPath.startsWith(items[j].itemPath + "/")
+      ) {
+        covered.set(i, j);
+        break;
+      }
+    }
+  }
+  return covered;
+}

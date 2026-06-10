@@ -4,8 +4,10 @@ import { Badge } from "@/components/ui/badge";
 import { Spinner } from "@/components/ui/spinner";
 import type { SitecoreTreeNode } from "@/hooks/use-sitecore-tree";
 import type { DualTreeNode } from "@/hooks/use-dual-tree";
+import { transformIconUrl } from "@/hooks/use-dual-tree";
 import { cn } from "@/lib/utils";
 import {
+  Check,
   ChevronRight,
   CloudOff,
   File,
@@ -299,6 +301,7 @@ interface DualTreeRowProps {
   onSelect: (node: DualTreeNode) => void;
   expandedPaths: Set<string>;
   onToggleExpand: (path: string) => void;
+  existingPaths?: string[];
 }
 
 function DualTreeRow({
@@ -313,12 +316,15 @@ function DualTreeRow({
   onSelect,
   expandedPaths,
   onToggleExpand,
+  existingPaths = [],
 }: DualTreeRowProps) {
   const isExpanded = expandedPaths.has(node.path);
+  const [iconError, setIconError] = useState(false);
   const children = getDualChildren(node.path);
   const isLoading = isLoadingPath(node.path);
   const nodeError = getError(node.path);
   const isSelected = selectedPath === node.path;
+  const isAlreadyAdded = side === "source" && existingPaths.includes(node.path);
 
   // Ghost: item doesn't exist on this side
   const isGhost =
@@ -417,10 +423,19 @@ function DualTreeRow({
           </span>
         )}
 
-        {/* Icon — ghost uses CloudOff */}
+        {/* Icon — ghost uses CloudOff, otherwise use Sitecore icon with lucide fallback */}
         <span className={cn("shrink-0", isGhost ? "text-muted-foreground/50" : "text-muted-foreground")}>
           {isGhost ? (
             <CloudOff className="size-4" />
+          ) : node.icon && !iconError ? (
+            <img
+              src={transformIconUrl(node.icon)}
+              width={16}
+              height={16}
+              alt=""
+              className="size-4 object-contain"
+              onError={() => setIconError(true)}
+            />
           ) : node.hasChildren ? (
             isExpanded ? (
               <FolderOpen className="size-4" />
@@ -436,6 +451,11 @@ function DualTreeRow({
         <span className={cn("flex-1 truncate font-medium", isGhost && "text-muted-foreground/60")}>
           {node.name}
         </span>
+
+        {/* Already-added indicator (source side only) */}
+        {isAlreadyAdded && (
+          <Check className="shrink-0 size-3.5 text-primary" aria-label="Added to transfer" />
+        )}
 
         {/* Modified indicator */}
         {node.isDifferent && !isGhost && (
@@ -481,6 +501,7 @@ function DualTreeRow({
               onSelect={onSelect}
               expandedPaths={expandedPaths}
               onToggleExpand={onToggleExpand}
+              existingPaths={existingPaths}
             />
           ))}
         </>
@@ -512,6 +533,8 @@ export interface DualTreePaneProps {
   /** Shared expansion state owned by the parent */
   expandedPaths: Set<string>;
   onToggleExpand: (path: string) => void;
+  /** Paths already added to the transfer — shown with a check icon on source side */
+  existingPaths?: string[];
 }
 
 export function DualTreePane({
@@ -525,6 +548,7 @@ export function DualTreePane({
   onSelect,
   expandedPaths,
   onToggleExpand,
+  existingPaths = [],
 }: DualTreePaneProps) {
   // Trigger initial load of the root on mount
   useEffect(() => {
@@ -578,6 +602,7 @@ export function DualTreePane({
           onSelect={onSelect}
           expandedPaths={expandedPaths}
           onToggleExpand={onToggleExpand}
+          existingPaths={existingPaths}
         />
       ))}
     </div>

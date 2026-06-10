@@ -11,12 +11,10 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
 import { Stepper } from "@/components/ui/stepper";
 import { EnvironmentSelector } from "./environment-selector";
-import { ItemPathInput } from "./item-path-input";
+import { InlineItemSelector } from "./inline-item-selector";
 import { TransferProgressDisplay } from "./transfer-progress";
 import { useContentTransfer } from "@/hooks/use-content-transfer";
 import { useTransferHistory } from "@/hooks/use-transfer-history";
@@ -32,6 +30,7 @@ import {
   SCOPE_OPTIONS,
 } from "@/lib/content-transfer";
 import { ArrowLeft, ArrowRight, CheckCircle2, RotateCcw } from "lucide-react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
 
@@ -66,18 +65,10 @@ export function TransferWizard({
     initialDestinationId ?? null
   );
   const [label, setLabel] = useState("");
-  const [dataTrees, setDataTrees] = useState<DataTreeItem[]>([
-    {
-      itemPath: "",
-      scope: "ItemAndDescendants",
-      mergeStrategy: "OverrideExistingItem",
-    },
-  ]);
+  const [dataTrees, setDataTrees] = useState<DataTreeItem[]>([]);
 
   // ── Derived environment info ──────────────────────────────────────────────
   const environments = useMemo((): ResourceAccessEntry[] => {
-    // The SDK returns data in `resourceAccess` (preferred) or `resources` (legacy).
-    // In real responses tenantName may be null — use tenantDisplayName instead.
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const raw: any[] = appContext?.resourceAccess?.length
       ? appContext.resourceAccess
@@ -146,260 +137,71 @@ export function TransferWizard({
 
   // ── Render ────────────────────────────────────────────────────────────────
   return (
-    <div className="space-y-6">
-      {/* Stepper */}
-      <Stepper steps={STEPS} currentStep={currentStep} />
-
-      {/* Persistent environment route — visible on steps 1–3 */}
-      {currentStep > 0 && sourceEnv && destEnv && (
-        <div className="flex items-center gap-3 rounded-lg border bg-muted/40 px-4 py-2.5 text-sm">
-          <div className="flex items-center gap-1.5 min-w-0">
-            <span className="text-xs text-muted-foreground shrink-0">From</span>
-            <span className="font-medium truncate">{getEnvironmentLabel(sourceEnv)}</span>
-          </div>
-          <ArrowRight className="size-3.5 text-muted-foreground shrink-0" />
-          <div className="flex items-center gap-1.5 min-w-0">
-            <span className="text-xs text-muted-foreground shrink-0">To</span>
-            <span className="font-medium truncate">{getEnvironmentLabel(destEnv)}</span>
-          </div>
-        </div>
-      )}
-
-      {/* Step content */}
-      <Card>
-        {/* ── Step 0: Environments ─────────────────────────────────────── */}
-        {currentStep === 0 && (
-          <>
-            <CardHeader>
-              <CardTitle>Select Environments</CardTitle>
-              <CardDescription>
-                Choose the source environment to transfer content from and the
-                destination environment to transfer content to.
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <EnvironmentSelector
-                environments={environments}
-                sourceId={sourceId}
-                destinationId={destinationId}
-                onSourceChange={setSourceId}
-                onDestinationChange={setDestinationId}
-              />
-              {environments.length === 0 && (
-                <Alert variant="warning">
-                  <AlertDescription>
-                    No environments found in application context. Ensure this app
-                    has been granted access to XM Cloud tenants in the Sitecore
-                    Cloud Portal.
-                  </AlertDescription>
-                </Alert>
-              )}
-            </CardContent>
-          </>
-        )}
-
-        {/* ── Step 1: Items ────────────────────────────────────────────── */}
-        {currentStep === 1 && (
-          <>
-            <CardHeader>
-              <CardTitle>Configure Content Items</CardTitle>
-              <CardDescription>
-                Add the Sitecore item paths you want to transfer. For each
-                item, choose how far down the tree to include and how to handle
-                existing content.
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-6">
-              {/* Transfer label */}
-              <div className="space-y-2">
-                <Label htmlFor="transfer-label">Transfer Label (optional)</Label>
-                <Input
-                  id="transfer-label"
-                  placeholder="e.g. Homepage content migration"
-                  value={label}
-                  onChange={(e) => setLabel(e.target.value)}
-                  maxLength={100}
-                />
-                <p className="text-xs text-muted-foreground">
-                  A human-readable name to identify this transfer in the history.
-                </p>
-              </div>
-
-              <Separator />
-
-              {/* Item paths */}
-              <ItemPathInput
-                items={dataTrees}
-                onChange={setDataTrees}
-                sourceContextId={sourceId}
-                destinationContextId={destinationId}
-                sourceEnvName={sourceEnv ? getEnvironmentLabel(sourceEnv) : undefined}
-                destinationEnvName={destEnv ? getEnvironmentLabel(destEnv) : undefined}
-              />
-            </CardContent>
-          </>
-        )}
-
-        {/* ── Step 2: Review ───────────────────────────────────────────── */}
-        {currentStep === 2 && (
-          <>
-            <CardHeader>
-              <CardTitle>Review Transfer</CardTitle>
-              <CardDescription>
-                Confirm the details below before starting the transfer. This
-                operation will move content from the source environment to the
-                destination environment.
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-6">
-              {/* Environments summary */}
-              <div className="rounded-lg border p-4 space-y-3">
-                <h4 className="text-sm font-medium">Environments</h4>
-                <div className="flex items-center gap-3 text-sm">
-                  <div className="flex-1 rounded-md bg-muted p-2.5 text-center">
-                    <p className="font-medium">{sourceEnv ? getEnvironmentLabel(sourceEnv) : ""}</p>
-                    <p className="text-xs text-muted-foreground mt-0.5">Source</p>
-                  </div>
-                  <ArrowRight className="size-5 text-muted-foreground shrink-0" />
-                  <div className="flex-1 rounded-md bg-muted p-2.5 text-center">
-                    <p className="font-medium">{destEnv ? getEnvironmentLabel(destEnv) : ""}</p>
-                    <p className="text-xs text-muted-foreground mt-0.5">
-                      Destination
-                    </p>
-                  </div>
-                </div>
-              </div>
-
-              {/* Label */}
-              {label && (
-                <div className="rounded-lg border p-4">
-                  <h4 className="text-sm font-medium mb-1">Label</h4>
-                  <p className="text-sm text-muted-foreground">{label}</p>
-                </div>
-              )}
-
-              {/* Items */}
-              <div className="rounded-lg border p-4 space-y-3">
-                <div className="flex items-center justify-between">
-                  <h4 className="text-sm font-medium">Content Items</h4>
-                  <Badge colorScheme="neutral" size="sm">
-                    {dataTrees.length} item{dataTrees.length !== 1 ? "s" : ""}
-                  </Badge>
-                </div>
-                <div className="space-y-2">
-                  {dataTrees.map((item, i) => {
-                    const scopeLabel =
-                      SCOPE_OPTIONS.find((s) => s.value === item.scope)?.label ??
-                      item.scope;
-                    const strategyLabel =
-                      MERGE_STRATEGY_OPTIONS.find(
-                        (s) => s.value === item.mergeStrategy
-                      )?.label ?? item.mergeStrategy;
-                    return (
-                      <div
-                        key={i}
-                        className="flex flex-wrap items-center gap-2 text-sm"
-                      >
-                        <code className="text-xs bg-muted px-1.5 py-0.5 rounded font-mono">
-                          {item.itemPath}
-                        </code>
-                        <Badge colorScheme="primary" size="sm">
-                          {scopeLabel}
-                        </Badge>
-                        <Badge colorScheme="neutral" size="sm">
-                          {strategyLabel}
-                        </Badge>
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-
-              <Alert variant="warning">
-                <AlertDescription>
-                  <strong>Note:</strong> Items with &quot;Override Existing&quot;
-                  strategy will overwrite content in the destination environment.
-                  This action cannot be undone.
-                </AlertDescription>
-              </Alert>
-            </CardContent>
-          </>
-        )}
-
-        {/* ── Step 3: Progress ─────────────────────────────────────────── */}
-        {currentStep === 3 && (
-          <>
-            <CardHeader>
-              <CardTitle>Transfer in Progress</CardTitle>
-              <CardDescription>
-                The transfer is being orchestrated. Do not close this window
-                while the transfer is running.
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
-              <TransferProgressDisplay
-                phase={phase}
-                progress={progress}
-                error={error}
-                chunkSetsMetadata={chunkSetsMetadata}
-                transferId={transferId}
-              />
-            </CardContent>
-          </>
-        )}
-      </Card>
-
-      {/* Navigation footer */}
-      <div className="flex items-center justify-between">
-        <Button
-          variant="outline"
-          onClick={currentStep === 3 ? () => router.push("/") : goBack}
-          disabled={currentStep === 3 && isRunning}
-        >
-          {currentStep === 3 ? (
-            <>
-              <ArrowLeft className="size-4 mr-2" />
-              Back to Dashboard
-            </>
-          ) : currentStep === 0 ? (
-            <>
-              <ArrowLeft className="size-4 mr-2" />
-              Cancel
-            </>
-          ) : (
-            <>
-              <ArrowLeft className="size-4 mr-2" />
-              Back
-            </>
-          )}
+    <div className="flex min-h-screen bg-background">
+      {/* ── Sidebar — sticky so it never scrolls ─────────────────────────── */}
+      <aside className="w-64 shrink-0 border-r bg-card flex flex-col px-6 py-6 gap-5 sticky top-0 h-screen overflow-y-auto">
+        {/* Dashboard link */}
+        <Button variant="ghost" size="sm" className="w-fit -ml-2" asChild>
+          <Link href="/">
+            <ArrowLeft className="size-4 mr-2" />
+            Dashboard
+          </Link>
         </Button>
 
-        <div className="flex items-center gap-3">
-          {/* Step 3 completion actions */}
-          {currentStep === 3 && phase === "completed" && (
-            <>
-              <Button
-                variant="outline"
-                onClick={() => router.push(`/transfer/${transferId}`)}
-              >
-                <CheckCircle2 className="size-4 mr-2" />
-                View Details
-              </Button>
-              <Button
-                onClick={() => {
-                  router.push("/transfer/new");
-                  window.location.reload();
-                }}
-              >
-                <RotateCcw className="size-4 mr-2" />
-                New Transfer
-              </Button>
-            </>
-          )}
+        {/* Page title */}
+        <div>
+          <h1 className="text-sm font-semibold leading-tight">New Content Transfer</h1>
+          <p className="text-xs text-muted-foreground mt-1 leading-snug">
+            Configure and start a content transfer between environments
+          </p>
+        </div>
+
+        <Separator />
+
+        {/* Environment route — visible on steps 1–3 */}
+        {currentStep > 0 && sourceEnv && destEnv && (
+          <div className="space-y-1.5">
+            <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+              Transfer Route
+            </p>
+            <div className="text-xs font-medium truncate text-foreground">
+              {getEnvironmentLabel(sourceEnv)}
+            </div>
+            <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+              <ArrowRight className="size-3 shrink-0" />
+              <span className="font-medium text-foreground truncate">
+                {getEnvironmentLabel(destEnv)}
+              </span>
+            </div>
+          </div>
+        )}
+
+        {/* Navigation buttons */}
+        <div className="flex flex-col gap-2">
+          {/* Back button */}
+          <Button
+            variant="outline"
+            className="w-full"
+            onClick={currentStep === 3 ? () => router.push("/") : goBack}
+            disabled={currentStep === 3 && isRunning}
+          >
+            {currentStep === 3 ? (
+              <>
+                <ArrowLeft className="size-4 mr-2" />
+                Back to Dashboard
+              </>
+            ) : (
+              <>
+                <ArrowLeft className="size-4 mr-2" />
+                Back
+              </>
+            )}
+          </Button>
 
           {/* Forward navigation for steps 0–2 */}
           {currentStep < 3 && (
             <Button
+              className="w-full"
               onClick={goNext}
               disabled={
                 (currentStep === 0 && !step0Valid) ||
@@ -410,8 +212,205 @@ export function TransferWizard({
               {currentStep !== 2 && <ArrowRight className="size-4 ml-2" />}
             </Button>
           )}
+
+          {/* Step 3 completion actions */}
+          {currentStep === 3 && phase === "completed" && (
+            <>
+              <Button
+                variant="outline"
+                className="w-full"
+                onClick={() => router.push(`/transfer/${transferId}`)}
+              >
+                <CheckCircle2 className="size-4 mr-2" />
+                View Details
+              </Button>
+              <Button
+                className="w-full"
+                onClick={() => {
+                  router.push("/transfer/new");
+                  window.location.reload();
+                }}
+              >
+                <RotateCcw className="size-4 mr-2" />
+                New Transfer
+              </Button>
+            </>
+          )}
         </div>
-      </div>
+
+        <Separator />
+
+        {/* Vertical stepper */}
+        <Stepper steps={STEPS} currentStep={currentStep} orientation="vertical" />
+      </aside>
+
+      {/* ── Main content ─────────────────────────────────────────────────── */}
+      <main className="flex-1 overflow-auto p-8">
+        <Card>
+          {/* ── Step 0: Environments ───────────────────────────────────── */}
+          {currentStep === 0 && (
+            <>
+              <CardHeader>
+                <CardTitle>Select Environments</CardTitle>
+                <CardDescription>
+                  Choose the source environment to transfer content from and the
+                  destination environment to transfer content to.
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <EnvironmentSelector
+                  environments={environments}
+                  sourceId={sourceId}
+                  destinationId={destinationId}
+                  onSourceChange={setSourceId}
+                  onDestinationChange={setDestinationId}
+                />
+                {environments.length === 0 && (
+                  <Alert variant="warning">
+                    <AlertDescription>
+                      No environments found in application context. Ensure this app
+                      has been granted access to XM Cloud tenants in the Sitecore
+                      Cloud Portal.
+                    </AlertDescription>
+                  </Alert>
+                )}
+              </CardContent>
+            </>
+          )}
+
+          {/* ── Step 1: Items ──────────────────────────────────────────── */}
+          {currentStep === 1 && (
+            <>
+              <CardHeader>
+                <CardTitle>Select Content Items</CardTitle>
+                <CardDescription>
+                  Browse the source content tree and click items to add them to
+                  your transfer. Use the destination pane to compare what already
+                  exists on the other side.
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                <InlineItemSelector
+                  items={dataTrees}
+                  onChange={setDataTrees}
+                  sourceContextId={sourceId}
+                  destinationContextId={destinationId}
+                  sourceEnvName={sourceEnv ? getEnvironmentLabel(sourceEnv) : undefined}
+                  destinationEnvName={destEnv ? getEnvironmentLabel(destEnv) : undefined}
+                  label={label}
+                  onLabelChange={setLabel}
+                />
+              </CardContent>
+            </>
+          )}
+
+          {/* ── Step 2: Review ─────────────────────────────────────────── */}
+          {currentStep === 2 && (
+            <>
+              <CardHeader>
+                <CardTitle>Review Transfer</CardTitle>
+                <CardDescription>
+                  Confirm the details below before starting the transfer. This
+                  operation will move content from the source environment to the
+                  destination environment.
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-6">
+                {/* Environments summary */}
+                <div className="rounded-lg border p-4 space-y-3">
+                  <h4 className="text-sm font-medium">Environments</h4>
+                  <div className="flex items-center gap-3 text-sm">
+                    <div className="flex-1 rounded-md bg-muted p-2.5 text-center">
+                      <p className="font-medium">{sourceEnv ? getEnvironmentLabel(sourceEnv) : ""}</p>
+                      <p className="text-xs text-muted-foreground mt-0.5">Source</p>
+                    </div>
+                    <ArrowRight className="size-5 text-muted-foreground shrink-0" />
+                    <div className="flex-1 rounded-md bg-muted p-2.5 text-center">
+                      <p className="font-medium">{destEnv ? getEnvironmentLabel(destEnv) : ""}</p>
+                      <p className="text-xs text-muted-foreground mt-0.5">Destination</p>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Label */}
+                {label && (
+                  <div className="rounded-lg border p-4">
+                    <h4 className="text-sm font-medium mb-1">Label</h4>
+                    <p className="text-sm text-muted-foreground">{label}</p>
+                  </div>
+                )}
+
+                {/* Items */}
+                <div className="rounded-lg border p-4 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <h4 className="text-sm font-medium">Content Items</h4>
+                    <Badge colorScheme="neutral" size="sm">
+                      {dataTrees.length} item{dataTrees.length !== 1 ? "s" : ""}
+                    </Badge>
+                  </div>
+                  <div className="space-y-2">
+                    {dataTrees.map((item, i) => {
+                      const scopeLabel =
+                        SCOPE_OPTIONS.find((s) => s.value === item.scope)?.label ??
+                        item.scope;
+                      const strategyLabel =
+                        MERGE_STRATEGY_OPTIONS.find(
+                          (s) => s.value === item.mergeStrategy
+                        )?.label ?? item.mergeStrategy;
+                      return (
+                        <div
+                          key={i}
+                          className="flex flex-wrap items-center gap-2 text-sm"
+                        >
+                          <code className="text-xs bg-muted px-1.5 py-0.5 rounded font-mono">
+                            {item.itemPath}
+                          </code>
+                          <Badge colorScheme="primary" size="sm">
+                            {scopeLabel}
+                          </Badge>
+                          <Badge colorScheme="neutral" size="sm">
+                            {strategyLabel}
+                          </Badge>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                <Alert variant="warning">
+                  <AlertDescription>
+                    <strong>Note:</strong> Items with &quot;Override Existing&quot;
+                    strategy will overwrite content in the destination environment.
+                    This action cannot be undone.
+                  </AlertDescription>
+                </Alert>
+              </CardContent>
+            </>
+          )}
+
+          {/* ── Step 3: Progress ───────────────────────────────────────── */}
+          {currentStep === 3 && (
+            <>
+              <CardHeader>
+                <CardTitle>Transfer in Progress</CardTitle>
+                <CardDescription>
+                  The transfer is being orchestrated. Do not close this window
+                  while the transfer is running.
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                <TransferProgressDisplay
+                  phase={phase}
+                  progress={progress}
+                  error={error}
+                  chunkSetsMetadata={chunkSetsMetadata}
+                  transferId={transferId}
+                />
+              </CardContent>
+            </>
+          )}
+        </Card>
+      </main>
     </div>
   );
 }

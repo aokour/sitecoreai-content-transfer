@@ -2,8 +2,6 @@
 
 import React, { useCallback, useRef, useState } from "react";
 import { Spinner } from "@/components/ui/spinner";
-import { Switch } from "@/components/ui/switch";
-import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import {
   Tooltip,
@@ -151,7 +149,7 @@ export function ItemFieldComparison({
   destinationContextId,
   itemExistsInDestination,
 }: ItemFieldComparisonProps) {
-  const [showStandard, setShowStandard] = useState(false);
+  const [showAllFields, setShowAllFields] = useState(false);
   const [activeDiffIndex, setActiveDiffIndex] = useState<number | null>(null);
 
   // Ref map: field name → <tr> element
@@ -171,16 +169,13 @@ export function ItemFieldComparison({
     // activeDiffIndex will be reset via the key on the outer div
   }
 
-  // Filter standard fields based on toggle
-  const visibleFields = showStandard
-    ? fields
-    : fields.filter((f) => !f.isStandard);
+  // When showAllFields is off, show only fields that differ; when on, show everything.
+  const visibleFields = showAllFields ? fields : fields.filter((f) => f.isDifferent);
 
   // Group by section, preserving sort order
   const sections = [...new Set(visibleFields.map((f) => f.section))];
 
   // Build the ordered list of diff field names as they appear in the table
-  // (section order × diffs-first within each section)
   const orderedDiffNames: string[] = sections.flatMap((section) =>
     visibleFields
       .filter((f) => f.section === section && f.isDifferent)
@@ -188,8 +183,7 @@ export function ItemFieldComparison({
   );
 
   const totalDiffs = orderedDiffNames.length;
-  const allDiffCount = fields.filter((f) => f.isDifferent && !f.isStandard).length;
-  const stdDiffCount = fields.filter((f) => f.isDifferent && f.isStandard).length;
+  const diffCount = fields.filter((f) => f.isDifferent).length;
 
   const scrollToDiff = useCallback(
     (index: number) => {
@@ -222,15 +216,10 @@ export function ItemFieldComparison({
           <code className="text-xs font-mono text-muted-foreground truncate">
             {path}
           </code>
-          {allDiffCount > 0 && (
+          {diffCount > 0 && (
             <span className="flex items-center gap-1 shrink-0 text-xs bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-400 px-2 py-0.5 rounded-full font-medium">
               <AlertTriangle className="size-3" />
-              {allDiffCount} diff{allDiffCount !== 1 ? "s" : ""}
-            </span>
-          )}
-          {stdDiffCount > 0 && showStandard && (
-            <span className="shrink-0 text-xs text-muted-foreground">
-              +{stdDiffCount} in standard
+              {diffCount} diff{diffCount !== 1 ? "s" : ""}
             </span>
           )}
           {!itemExistsInDestination && (
@@ -241,17 +230,16 @@ export function ItemFieldComparison({
           )}
         </div>
 
-        {/* Right: prev/next nav + standard toggle */}
+        {/* Right: prev/next nav + show-all toggle */}
         <div className="flex items-center gap-3 shrink-0">
-          {/* Diff navigation */}
-          {totalDiffs > 0 && (
+          {/* Diff navigation — only shown when in diffs-only mode */}
+          {totalDiffs > 0 && !showAllFields && (
             <div className="flex items-center gap-1.5">
               <Button
                 variant="outline"
                 size="sm"
                 className="h-7 w-7 p-0"
                 onClick={handlePrev}
-                disabled={totalDiffs === 0}
                 aria-label="Previous diff"
               >
                 <ChevronUp className="size-3.5" />
@@ -266,7 +254,6 @@ export function ItemFieldComparison({
                 size="sm"
                 className="h-7 w-7 p-0"
                 onClick={handleNext}
-                disabled={totalDiffs === 0}
                 aria-label="Next diff"
               >
                 <ChevronDown className="size-3.5" />
@@ -274,23 +261,18 @@ export function ItemFieldComparison({
             </div>
           )}
 
-          {/* Standard fields toggle */}
-          <div className="flex items-center gap-2">
-            <Switch
-              id="show-standard-fields"
-              checked={showStandard}
-              onCheckedChange={(v) => {
-                setShowStandard(v);
-                setActiveDiffIndex(null);
-              }}
-            />
-            <Label
-              htmlFor="show-standard-fields"
-              className="text-xs text-muted-foreground cursor-pointer select-none"
-            >
-              Standard fields
-            </Label>
-          </div>
+          {/* Show all fields toggle */}
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-7 text-xs text-muted-foreground"
+            onClick={() => {
+              setShowAllFields((v) => !v);
+              setActiveDiffIndex(null);
+            }}
+          >
+            {showAllFields ? "Diffs only" : "Show all fields"}
+          </Button>
         </div>
       </div>
 
@@ -306,7 +288,9 @@ export function ItemFieldComparison({
         </div>
       ) : visibleFields.length === 0 ? (
         <div className="py-5 text-center text-xs text-muted-foreground">
-          No fields to display
+          {!showAllFields
+            ? "No differences found — fields are identical"
+            : "No fields to display"}
         </div>
       ) : (
         <div className="overflow-y-auto">
