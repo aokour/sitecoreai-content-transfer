@@ -13,6 +13,8 @@ import { useCallback, useRef, useState } from "react";
 
 const POLL_INTERVAL_MS = 3000;
 const MAX_POLL_ATTEMPTS = 120; // 6 minutes max
+const SAVE_CHUNK_MAX_RETRIES = 3;
+const SAVE_CHUNK_RETRY_BASE_MS = 2000; // exponential: 2s, 4s, 8s
 
 // ── Logging helpers ───────────────────────────────────────────────────────
 const LOG_PREFIX = "[ContentTransfer]";
@@ -309,38 +311,62 @@ export function useContentTransfer() {
           `Step3${label}`,
           `  saveChunk ${chunkIndex + 1}/${chunkSet.ChunkCount} → dest (Blob size=${(chunkBlob as Blob).size}) isMedia=${isMedia} destCtx=${subConfig.destinationContextId}`,
         );
-        const saveRes = await client.mutate("xmc.contentTransfer.saveChunk", {
-          params: {
-            path: {
-              transferId: subConfig.transferId,
-              chunksetId: chunkSet.ChunkSetId,
-              chunkId: chunkIndex,
-            },
-            body: chunkBlob,
-            query: {
-              sitecoreContextId: subConfig.destinationContextId,
-              isMedia,
-            },
-          },
-        });
-        const saveResAny = saveRes as unknown as {
+        let saveResAny!: {
           error?: unknown;
           data?: unknown;
           response?: { status?: number };
         };
-        log(`Step3${label}`, `  saveChunk response`, saveResAny);
-        if (saveResAny.error) {
-          logError(`Step3${label}`, `saveChunk failed`, saveResAny.error);
+        for (let attempt = 0; attempt <= SAVE_CHUNK_MAX_RETRIES; attempt++) {
+          if (attempt > 0) {
+            const delayMs = SAVE_CHUNK_RETRY_BASE_MS * Math.pow(2, attempt - 1);
+            logWarn(
+              `Step3${label}`,
+              `  saveChunk retry ${attempt}/${SAVE_CHUNK_MAX_RETRIES} after ${delayMs}ms — chunkId=${chunkIndex}`,
+            );
+            await sleep(delayMs);
+          }
+          if (abortRef.current) throw new Error("Transfer aborted");
+          const saveRes = await client.mutate("xmc.contentTransfer.saveChunk", {
+            params: {
+              path: {
+                transferId: subConfig.transferId,
+                chunksetId: chunkSet.ChunkSetId,
+                chunkId: chunkIndex,
+              },
+              body: chunkBlob,
+              query: {
+                sitecoreContextId: subConfig.destinationContextId,
+                isMedia,
+              },
+            },
+          });
+          saveResAny = saveRes as unknown as {
+            error?: unknown;
+            data?: unknown;
+            response?: { status?: number };
+          };
+          log(`Step3${label}`, `  saveChunk attempt ${attempt + 1} response`, saveResAny);
+          if (!saveResAny.error) break;
           const httpStatus = saveResAny.response?.status;
           if (httpStatus === 405) {
+            logError(`Step3${label}`, `saveChunk failed`, saveResAny.error);
             throw new Error(
               `saveChunk returned 405 Method Not Allowed (isMedia=${isMedia}). ` +
                 `The destination environment does not support the Content Transfer API (PUT /content/v1/transfers/.../chunks) through the marketplace SDK proxy. ` +
                 `Sitecore support ticket required. Details: source=${subConfig.sourceContextId}, dest=${subConfig.destinationContextId}, error=${JSON.stringify(saveResAny.error)}`,
             );
           }
-          throw new Error(
-            `saveChunk failed (HTTP ${httpStatus ?? "?"}) for chunk ${chunkIndex} of chunkset ${chunkSet.ChunkSetId}: ${JSON.stringify(saveResAny.error)}`,
+          const isRetryable = typeof httpStatus === "number" && httpStatus >= 500;
+          if (!isRetryable || attempt === SAVE_CHUNK_MAX_RETRIES) {
+            logError(`Step3${label}`, `saveChunk failed`, saveResAny.error);
+            throw new Error(
+              `saveChunk failed (HTTP ${httpStatus ?? "?"}) for chunk ${chunkIndex} of chunkset ${chunkSet.ChunkSetId}: ${JSON.stringify(saveResAny.error)}`,
+            );
+          }
+          logWarn(
+            `Step3${label}`,
+            `  saveChunk transient error (HTTP ${httpStatus}), will retry`,
+            saveResAny.error,
           );
         }
         log(`Step3${label}`, `  ✓ Chunk ${chunkIndex} saved`);
