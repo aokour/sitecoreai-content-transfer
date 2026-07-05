@@ -15,6 +15,9 @@ const POLL_INTERVAL_MS = 3000;
 const MAX_POLL_ATTEMPTS = 120; // 6 minutes max
 const SAVE_CHUNK_MAX_RETRIES = 3;
 const SAVE_CHUNK_RETRY_BASE_MS = 2000; // exponential: 2s, 4s, 8s
+// Large binary chunks can take minutes to download/upload through the PostMessage bridge.
+// The SDK default is 30s which is too short — use 6 minutes per chunk operation.
+const CHUNK_TRANSFER_TIMEOUT_MS = 6 * 60 * 1000;
 
 // ── Logging helpers ───────────────────────────────────────────────────────
 const LOG_PREFIX = "[ContentTransfer]";
@@ -273,6 +276,7 @@ export function useContentTransfer() {
             },
             query: { sitecoreContextId: subConfig.sourceContextId },
           },
+          timeoutMs: CHUNK_TRANSFER_TIMEOUT_MS,
         });
 
         // client.query() wraps result in QueryResult; actual payload is at .data.data
@@ -280,11 +284,17 @@ export function useContentTransfer() {
         const rawChunkRes = chunkRes?.data as unknown;
         const chunkBlob =
           (rawChunkRes as { data?: Blob | File | null })?.data ?? null;
+        const chunkHttpRes = (
+          rawChunkRes as { response?: { status?: number; headers?: Headers } }
+        )?.response;
         log(
           `Step3${label}`,
           `  getChunk ${chunkIndex} raw response` +
+            ` httpStatus=${chunkHttpRes?.status ?? "?"}` +
+            ` content-type=${chunkHttpRes?.headers?.get?.("content-type") ?? "?"}` +
             ` type=${chunkBlob ? (chunkBlob instanceof Blob ? `Blob(type="${(chunkBlob as Blob).type}")` : typeof chunkBlob) : "null"}` +
             ` size=${chunkBlob instanceof Blob ? (chunkBlob as Blob).size : "n/a"}`,
+          rawChunkRes,
         );
         if (!chunkBlob) {
           logError(
@@ -339,13 +349,18 @@ export function useContentTransfer() {
                 isMedia,
               },
             },
+            timeoutMs: CHUNK_TRANSFER_TIMEOUT_MS,
           });
           saveResAny = saveRes as unknown as {
             error?: unknown;
             data?: unknown;
             response?: { status?: number };
           };
-          log(`Step3${label}`, `  saveChunk attempt ${attempt + 1} response`, saveResAny);
+          log(
+            `Step3${label}`,
+            `  saveChunk attempt ${attempt + 1} response`,
+            saveResAny,
+          );
           if (!saveResAny.error) break;
           const httpStatus = saveResAny.response?.status;
           if (httpStatus === 405) {
@@ -356,7 +371,8 @@ export function useContentTransfer() {
                 `Sitecore support ticket required. Details: source=${subConfig.sourceContextId}, dest=${subConfig.destinationContextId}, error=${JSON.stringify(saveResAny.error)}`,
             );
           }
-          const isRetryable = typeof httpStatus === "number" && httpStatus >= 500;
+          const isRetryable =
+            typeof httpStatus === "number" && httpStatus >= 500;
           if (!isRetryable || attempt === SAVE_CHUNK_MAX_RETRIES) {
             logError(`Step3${label}`, `saveChunk failed`, saveResAny.error);
             throw new Error(
@@ -443,8 +459,8 @@ export function useContentTransfer() {
       );
 
       // 3c: Kick off import of this chunk set's assembled file on destination
-      // /items/v2/ConsumeFile requires a schema prefix: file:// for content, blob:// for media.
-      const consumeFileName = isMedia ? `blob://${fileName}` : `file://${fileName}`;
+      // Both media and content use blob:// — file:// is only for on-disk file system transfers.
+      const consumeFileName = `blob://${fileName}`;
       log(
         `Step3${label}`,
         `  consumeFile — fileName=${consumeFileName} destCtx=${subConfig.destinationContextId}`,
@@ -507,7 +523,7 @@ export function useContentTransfer() {
         }
         if (!consumed)
           throw new Error(
-            `consumeFile: file not ready after ${MAX_CONSUME_ATTEMPTS} attempts (~${Math.round((MAX_CONSUME_ATTEMPTS + 1) * POLL_INTERVAL_MS / 1000)}s) — ${consumeFileName}`,
+            `consumeFile: file not ready after ${MAX_CONSUME_ATTEMPTS} attempts (~${Math.round(((MAX_CONSUME_ATTEMPTS + 1) * POLL_INTERVAL_MS) / 1000)}s) — ${consumeFileName}`,
           );
       }
 
@@ -535,30 +551,47 @@ export function useContentTransfer() {
       `Step5${label}`,
       `Deleting transfer from source — transferId=${subConfig.transferId}`,
     );
-    await client.mutate("xmc.contentTransfer.deleteContentTransfer", {
-      params: {
-        path: { transferId: subConfig.transferId },
-        query: { sitecoreContextId: subConfig.sourceContextId },
+    const deleteSourceRes = await client.mutate(
+      "xmc.contentTransfer.deleteContentTransfer",
+      {
+        params: {
+          path: { transferId: subConfig.transferId },
+          query: { sitecoreContextId: subConfig.sourceContextId },
+        },
       },
-    });
+    );
+    log(
+      `Step5${label}`,
+      `deleteContentTransfer source response`,
+      deleteSourceRes,
+    );
+
     log(
       `Step5${label}`,
       `Deleting transfer from destination — transferId=${subConfig.transferId}`,
     );
-    await client
-      .mutate("xmc.contentTransfer.deleteContentTransfer", {
-        params: {
-          path: { transferId: subConfig.transferId },
-          query: { sitecoreContextId: subConfig.destinationContextId },
+    try {
+      const deleteDestRes = await client.mutate(
+        "xmc.contentTransfer.deleteContentTransfer",
+        {
+          params: {
+            path: { transferId: subConfig.transferId },
+            query: { sitecoreContextId: subConfig.destinationContextId },
+          },
         },
-      })
-      .catch((e) => {
-        logWarn(
-          `Step5${label}`,
-          "Destination cleanup failed (ignored — destination may not have a record)",
-          e,
-        );
-      });
+      );
+      log(
+        `Step5${label}`,
+        `deleteContentTransfer destination response`,
+        deleteDestRes,
+      );
+    } catch (e) {
+      logWarn(
+        `Step5${label}`,
+        "Destination cleanup failed (ignored — destination may not have a record)",
+        e,
+      );
+    }
 
     log(
       `Done${label}`,
