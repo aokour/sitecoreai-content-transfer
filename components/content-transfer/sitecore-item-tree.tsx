@@ -489,7 +489,7 @@ function DualTreeRow({
         <>
           {children.map((child) => (
             <DualTreeRow
-              key={child.path}
+              key={child.itemId}
               node={child}
               side={side}
               depth={depth + 1}

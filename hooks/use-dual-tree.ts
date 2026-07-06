@@ -101,10 +101,10 @@ function mergeNodes(
   sourceNodes: RawTreeNode[],
   destNodes: RawTreeNode[],
 ): DualTreeNode[] {
-  const byPath = new Map<string, DualTreeNode>();
+  const byItemId = new Map<string, DualTreeNode>();
 
   for (const n of sourceNodes) {
-    byPath.set(n.path, {
+    byItemId.set(n.itemId, {
       itemId: n.itemId,
       name: n.name,
       path: n.path,
@@ -121,7 +121,7 @@ function mergeNodes(
   }
 
   for (const n of destNodes) {
-    const existing = byPath.get(n.path);
+    const existing = byItemId.get(n.itemId);
     if (existing) {
       existing.existsInDestination = true;
       existing.destUpdated = n.updated?.value;
@@ -142,7 +142,7 @@ function mergeNodes(
         existing.isDifferent = !!srcUpd && !!dstUpd && srcUpd !== dstUpd;
       }
     } else {
-      byPath.set(n.path, {
+      byItemId.set(n.itemId, {
         itemId: n.itemId,
         name: n.name,
         path: n.path,
@@ -161,7 +161,7 @@ function mergeNodes(
 
   // Sort: items that exist on both sides first, then source-only, then dest-only;
   // within each group sort alphabetically by name.
-  return [...byPath.values()].sort((a, b) => {
+  return [...byItemId.values()].sort((a, b) => {
     const aScore =
       a.existsInSource && a.existsInDestination ? 0 : a.existsInSource ? 1 : 2;
     const bScore =
