@@ -26,15 +26,17 @@ const GET_CHUNK_RETRY_BASE_MS = 2000;
 // chunk of a set also carries a header, media chunks are compressed, content
 // chunks are encrypted). Client-side re-slicing is therefore NOT allowed.
 //
-// The failure mode for large chunks is the marketplace SDK bridge's ~30s
-// default request timeout, which is applied at the PostMessage layer and does
-// NOT honor the per-call timeoutMs (observed: timeoutMs=360000 passed,
-// CoreError.timeout fired at exactly 30s, while the host later logged
-// "Processed generic api request" — the operation itself succeeded).
-// Fix: raise the bridge default timeout in @sitecore-marketplace-sdk/core
-// (patch-package) until the SDK honors per-request timeouts. The retries
-// below help with transient failures but cannot outwait a hard 30s ceiling
-// on a >30s transfer.
+// The PostMessage bridge applies a ~30s default request timeout and does NOT
+// honor the per-call timeoutMs passed to client.query/mutate. Large chunks
+// take 15-60s+ through the bridge, so the bridge default MUST be raised at
+// SDK initialization for this hook to work:
+//
+//   ClientSDK.init({ target: window.parent, modules: [XMC],
+//                    timeout: 10 * 60 * 1000 })
+//
+// The retries below handle transient failures (5xx, network blips, empty
+// responses) but cannot outwait a 30s bridge ceiling on a >30s transfer —
+// if chunk transfers time out at exactly 30s, check the init config first.
 // Large binary chunks can take minutes to download/upload through the PostMessage bridge.
 // The SDK default is 30s which is too short — use 6 minutes per chunk operation.
 const CHUNK_TRANSFER_TIMEOUT_MS = 6 * 60 * 1000;
@@ -756,6 +758,44 @@ export function useContentTransfer() {
     );
   }
 
+  // ── Failure/abort cleanup ─────────────────────────────────────────────────
+  // Best-effort removal of a sub-transfer's staged resources (chunksets,
+  // chunk data) from BOTH environments. Called when a sub-transfer fails or
+  // is aborted so gigabytes of staged chunk data don't linger. Errors are
+  // logged and swallowed — cleanup must never mask the original failure.
+  // Note: this does NOT remove consumed .raif sources on the destination
+  // (renamed "consumed.*" after consumeFile); those are retained by design
+  // for the Item Transfer API's history/retry and require
+  // DELETE /sources/blobs/{blobName} (v3 Item Transfer API) to purge.
+  async function cleanupSubTransfer(
+    subConfig: TransferConfig,
+    label: string,
+  ): Promise<void> {
+    for (const [ctx, side] of [
+      [subConfig.sourceContextId, "source"],
+      [subConfig.destinationContextId, "destination"],
+    ] as const) {
+      try {
+        log(
+          `Cleanup${label}`,
+          `Deleting transfer from ${side} — transferId=${subConfig.transferId}`,
+        );
+        await client.mutate("xmc.contentTransfer.deleteContentTransfer", {
+          params: {
+            path: { transferId: subConfig.transferId },
+            query: { sitecoreContextId: ctx },
+          },
+        });
+      } catch (e) {
+        logWarn(
+          `Cleanup${label}`,
+          `Cleanup on ${side} failed (ignored) — transferId=${subConfig.transferId}`,
+          e,
+        );
+      }
+    }
+  }
+
   // ── Main orchestration ────────────────────────────────────────────────────
 
   const startTransfer = useCallback(
@@ -817,13 +857,23 @@ export function useContentTransfer() {
         ] of subTransfers.entries()) {
           if (abortRef.current) throw new Error("Transfer aborted");
           const progressOffset = i * progressShare;
-          await runSingleTransfer(
-            subConfig,
-            isMedia,
-            progressOffset,
-            progressShare,
-            label,
-          );
+          try {
+            await runSingleTransfer(
+              subConfig,
+              isMedia,
+              progressOffset,
+              progressShare,
+              label,
+            );
+          } catch (err) {
+            // Failed or aborted mid-flight: remove staged transfer resources
+            // from both environments (best-effort), then surface the error.
+            // Without this, failed transfers leave the operation and its
+            // staged chunk data parked on both sides — and the media
+            // sub-transfer's generated transferId would be unrecoverable.
+            await cleanupSubTransfer(subConfig, label);
+            throw err;
+          }
         }
 
         setProgress(100);
