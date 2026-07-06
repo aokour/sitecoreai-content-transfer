@@ -45,6 +45,7 @@ export const MarketplaceProvider: React.FC<ClientSDKProviderProps> = ({
       const config = {
         target: window.parent,
         modules: [XMC],
+        timeout: 10 * 60 * 1000, // 10 min — large binary chunks (90–200 MB) take 15–60s through the PostMessage bridge
       };
       try {
         setLoading(true);

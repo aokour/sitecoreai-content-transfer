@@ -15,6 +15,26 @@ const POLL_INTERVAL_MS = 3000;
 const MAX_POLL_ATTEMPTS = 120; // 6 minutes max
 const SAVE_CHUNK_MAX_RETRIES = 3;
 const SAVE_CHUNK_RETRY_BASE_MS = 2000; // exponential: 2s, 4s, 8s
+const GET_CHUNK_MAX_RETRIES = 3;
+const GET_CHUNK_RETRY_BASE_MS = 2000;
+
+// NOTE ON LARGE CHUNKS (90+ MB media chunks observed):
+// Chunk size is decided entirely by the source environment's packaging —
+// createContentTransfer exposes no chunk-size option. Chunks MUST be forwarded
+// 1:1 between getChunk and saveChunk: the API docs state "Do not alter, wrap,
+// re-encode or chunk the stream; forward it exactly as received" (the first
+// chunk of a set also carries a header, media chunks are compressed, content
+// chunks are encrypted). Client-side re-slicing is therefore NOT allowed.
+//
+// The failure mode for large chunks is the marketplace SDK bridge's ~30s
+// default request timeout, which is applied at the PostMessage layer and does
+// NOT honor the per-call timeoutMs (observed: timeoutMs=360000 passed,
+// CoreError.timeout fired at exactly 30s, while the host later logged
+// "Processed generic api request" — the operation itself succeeded).
+// Fix: raise the bridge default timeout in @sitecore-marketplace-sdk/core
+// (patch-package) until the SDK honors per-request timeouts. The retries
+// below help with transient failures but cannot outwait a hard 30s ceiling
+// on a >30s transfer.
 // Large binary chunks can take minutes to download/upload through the PostMessage bridge.
 // The SDK default is 30s which is too short — use 6 minutes per chunk operation.
 const CHUNK_TRANSFER_TIMEOUT_MS = 6 * 60 * 1000;
@@ -118,6 +138,11 @@ export function useContentTransfer() {
     throw new Error("Transfer status polling timed out");
   }
 
+  // IMPORTANT: `fileName` must be the RAW blob name (e.g. "contentTransfer-....raif"),
+  // WITHOUT the "blob://" scheme prefix. The Item Transfer API addresses blob sources
+  // by their plain name everywhere (GET /sources/blobs/{blobName}); the scheme prefix
+  // is only understood by consumeFile. Passing "blob://..." here makes the backend
+  // look up an Azure blob literally named "blob://..." → 404 BlobNotFound.
   async function pollBlobState(
     fileName: string,
     destCtx: string,
@@ -155,23 +180,242 @@ export function useContentTransfer() {
         `status/BlobState=${blobState ?? "(none)"} error/details=${blobError ?? "(none)"}`,
       );
       if (blobState === "Error") {
+        const errMsg =
+          typeof blobError === "string"
+            ? blobError
+            : JSON.stringify(blobError ?? "");
+        // Once the import worker picks up a consumed source, it renames the blob
+        // to a "consumed.<timestamp>.<guid>" name — so the original blob name can
+        // legitimately return 404 BlobNotFound mid/post-import. After a successful
+        // consumeFile, absence of the original blob means the import has STARTED,
+        // not that it failed. (A genuine import failure surfaces in the Item
+        // Transfer API's transfers list with state "Failed", not as BlobNotFound.)
+        if (errMsg.includes("BlobNotFound")) {
+          log(
+            "PollBlob",
+            `✓ Blob no longer present — consumed by import worker: ${fileName}`,
+          );
+          return;
+        }
         logError("PollBlob", "Import failed on destination", data);
-        throw new Error(
-          blobError
-            ? `Import failed: ${JSON.stringify(blobError)}`
-            : "Import failed on destination environment",
-        );
+        throw new Error(`Import failed: ${errMsg}`);
       }
       if (
         blobState === "Completed" ||
         blobState === "OK" ||
-        blobState === "Transferred"
+        blobState === "Transferred" ||
+        blobState === "Consumed" ||
+        // A populated ConsumedName means the source was renamed to its
+        // "consumed.*" name and handed to the import pipeline.
+        Boolean(
+          (data as unknown as { ConsumedName?: string | null }).ConsumedName,
+        )
       ) {
         log("PollBlob", `✓ Blob processed — fileName=${fileName}`);
         return;
       }
     }
     throw new Error("Blob state polling timed out");
+  }
+
+  // ── saveChunk with retry ──────────────────────────────────────────────────
+  // Retries transient failures: HTTP 5xx responses AND bridge-level timeout
+  // exceptions (CoreError "[client SDK] Request timed out"), which client.mutate
+  // THROWS rather than returning in .error. 405 and other 4xx fail fast.
+  async function saveChunkWithRetry(opts: {
+    transferId: string;
+    chunksetId: string;
+    chunkId: number;
+    body: Blob;
+    destinationContextId: string;
+    isMedia: boolean;
+    label: string;
+    logNote: string;
+  }): Promise<void> {
+    const {
+      transferId,
+      chunksetId,
+      chunkId,
+      body,
+      destinationContextId,
+      isMedia,
+      label,
+      logNote,
+    } = opts;
+    log(
+      `Step3${label}`,
+      `  saveChunk ${logNote} → dest (Blob size=${body.size}) chunkId=${chunkId} isMedia=${isMedia} destCtx=${destinationContextId}`,
+    );
+    for (let attempt = 0; attempt <= SAVE_CHUNK_MAX_RETRIES; attempt++) {
+      if (attempt > 0) {
+        const delayMs = SAVE_CHUNK_RETRY_BASE_MS * Math.pow(2, attempt - 1);
+        logWarn(
+          `Step3${label}`,
+          `  saveChunk retry ${attempt}/${SAVE_CHUNK_MAX_RETRIES} after ${delayMs}ms — chunkId=${chunkId}`,
+        );
+        await sleep(delayMs);
+      }
+      if (abortRef.current) throw new Error("Transfer aborted");
+
+      let saveResAny: {
+        error?: unknown;
+        data?: unknown;
+        response?: { status?: number };
+      };
+      try {
+        const saveRes = await client.mutate("xmc.contentTransfer.saveChunk", {
+          params: {
+            path: { transferId, chunksetId, chunkId },
+            body,
+            query: { sitecoreContextId: destinationContextId, isMedia },
+          },
+          timeoutMs: CHUNK_TRANSFER_TIMEOUT_MS,
+        });
+        saveResAny = saveRes as unknown as {
+          error?: unknown;
+          data?: unknown;
+          response?: { status?: number };
+        };
+      } catch (err) {
+        // Bridge timeout (or other thrown transport error). The per-call
+        // timeoutMs is not honored by the PostMessage bridge (~30s default),
+        // so large/slow uploads can land here. Treat as retryable.
+        const msg = err instanceof Error ? err.message : String(err);
+        if (attempt === SAVE_CHUNK_MAX_RETRIES) {
+          logError(
+            `Step3${label}`,
+            `saveChunk threw after ${attempt + 1} attempts — chunkId=${chunkId}`,
+            err,
+          );
+          throw new Error(
+            `saveChunk failed for chunk ${chunkId} of chunkset ${chunksetId}: ${msg}. ` +
+              `If this is a bridge timeout on a large chunk, the SDK bridge's 30s default timeout must be raised (see NOTE ON LARGE CHUNKS).`,
+          );
+        }
+        logWarn(
+          `Step3${label}`,
+          `  saveChunk transient exception (${msg}), will retry — chunkId=${chunkId}`,
+        );
+        continue;
+      }
+
+      log(
+        `Step3${label}`,
+        `  saveChunk attempt ${attempt + 1} response`,
+        saveResAny,
+      );
+      if (!saveResAny.error) return;
+
+      const httpStatus = saveResAny.response?.status;
+      if (httpStatus === 405) {
+        logError(`Step3${label}`, `saveChunk failed`, saveResAny.error);
+        throw new Error(
+          `saveChunk returned 405 Method Not Allowed (isMedia=${isMedia}). ` +
+            `The destination environment does not support the Content Transfer API (PUT /content/v1/transfers/.../chunks) through the marketplace SDK proxy. ` +
+            `Sitecore support ticket required. Details: dest=${destinationContextId}, error=${JSON.stringify(saveResAny.error)}`,
+        );
+      }
+      const isRetryable = typeof httpStatus === "number" && httpStatus >= 500;
+      if (!isRetryable || attempt === SAVE_CHUNK_MAX_RETRIES) {
+        logError(`Step3${label}`, `saveChunk failed`, saveResAny.error);
+        throw new Error(
+          `saveChunk failed (HTTP ${httpStatus ?? "?"}) for chunk ${chunkId} of chunkset ${chunksetId}: ${JSON.stringify(saveResAny.error)}`,
+        );
+      }
+      logWarn(
+        `Step3${label}`,
+        `  saveChunk transient error (HTTP ${httpStatus}), will retry`,
+        saveResAny.error,
+      );
+    }
+  }
+
+  // ── getChunk with retry ───────────────────────────────────────────────────
+  // Downloads one chunk from the source. Retries thrown bridge timeouts and
+  // empty responses. Note: the host completes the underlying fetch even after
+  // the client bridge times out, so a retry may succeed quickly if the server
+  // has the chunk warm — but a hard 30s bridge ceiling cannot be outwaited for
+  // a genuinely >30s download (see NOTE ON LARGE CHUNKS at the top).
+  async function getChunkWithRetry(opts: {
+    transferId: string;
+    chunksetId: string;
+    chunkId: number;
+    sourceContextId: string;
+    label: string;
+    logNote: string;
+  }): Promise<Blob> {
+    const { transferId, chunksetId, chunkId, sourceContextId, label, logNote } =
+      opts;
+    let lastError: unknown = null;
+    for (let attempt = 0; attempt <= GET_CHUNK_MAX_RETRIES; attempt++) {
+      if (attempt > 0) {
+        const delayMs = GET_CHUNK_RETRY_BASE_MS * Math.pow(2, attempt - 1);
+        logWarn(
+          `Step3${label}`,
+          `  getChunk retry ${attempt}/${GET_CHUNK_MAX_RETRIES} after ${delayMs}ms — chunkId=${chunkId}`,
+        );
+        await sleep(delayMs);
+      }
+      if (abortRef.current) throw new Error("Transfer aborted");
+      log(
+        `Step3${label}`,
+        `  getChunk ${logNote} — chunksetId=${chunksetId} chunkId=${chunkId} (attempt ${attempt + 1})`,
+      );
+      try {
+        const chunkRes = await client.query("xmc.contentTransfer.getChunk", {
+          params: {
+            path: { transferId, chunksetId, chunkId },
+            query: { sitecoreContextId: sourceContextId },
+          },
+          timeoutMs: CHUNK_TRANSFER_TIMEOUT_MS,
+        });
+        // client.query() wraps result in QueryResult; actual payload is at .data.data
+        // getChunk returns a Blob (raw .raif protobuf binary).
+        const rawChunkRes = chunkRes?.data as unknown;
+        const chunkBlob =
+          (rawChunkRes as { data?: Blob | File | null })?.data ?? null;
+        const chunkHttpRes = (
+          rawChunkRes as { response?: { status?: number; headers?: Headers } }
+        )?.response;
+        log(
+          `Step3${label}`,
+          `  getChunk ${chunkId} raw response` +
+            ` httpStatus=${chunkHttpRes?.status ?? "?"}` +
+            ` content-type=${chunkHttpRes?.headers?.get?.("content-type") ?? "?"}` +
+            ` type=${chunkBlob ? (chunkBlob instanceof Blob ? `Blob(type="${(chunkBlob as Blob).type}")` : typeof chunkBlob) : "null"}` +
+            ` size=${chunkBlob instanceof Blob ? (chunkBlob as Blob).size : "n/a"}`,
+          rawChunkRes,
+        );
+        if (chunkBlob instanceof Blob && chunkBlob.size > 0) {
+          return chunkBlob;
+        }
+        lastError = new Error("getChunk returned empty blob");
+        logWarn(
+          `Step3${label}`,
+          `  getChunk returned empty/invalid blob, will retry — chunkId=${chunkId}`,
+          rawChunkRes,
+        );
+      } catch (err) {
+        // Bridge timeout or transport error thrown by client.query — the
+        // per-call timeoutMs is not honored by the PostMessage bridge.
+        lastError = err;
+        const msg = err instanceof Error ? err.message : String(err);
+        logWarn(
+          `Step3${label}`,
+          `  getChunk transient exception (${msg}), will retry — chunkId=${chunkId}`,
+        );
+      }
+    }
+    logError(
+      `Step3${label}`,
+      `getChunk failed after ${GET_CHUNK_MAX_RETRIES + 1} attempts — chunkId=${chunkId}`,
+      lastError,
+    );
+    throw new Error(
+      `Failed to retrieve chunk ${chunkId} from chunk set ${chunksetId}: ${
+        lastError instanceof Error ? lastError.message : String(lastError)
+      }. If this is a bridge timeout on a large chunk, the SDK bridge's 30s default timeout must be raised (see NOTE ON LARGE CHUNKS).`,
+    );
   }
 
   // ── Single sub-transfer orchestration ────────────────────────────────────
@@ -258,54 +502,22 @@ export function useContentTransfer() {
         `Processing chunk set ${csIndex + 1}/${chunkSets.length} — ChunkSetId=${chunkSet.ChunkSetId} ChunkCount=${chunkSet.ChunkCount}`,
       );
 
-      // 3a: Get every chunk from source and save to destination
+      // 3a: Get every chunk from source and save to destination.
+      // Chunks are forwarded 1:1 with identical chunkIds — the API requires
+      // the exact byte stream from getChunk to be sent to saveChunk unaltered
+      // (no re-chunking, no re-encoding; first chunk carries a header, media
+      // is compressed, content is encrypted).
       for (let chunkIndex = 0; chunkIndex < chunkSet.ChunkCount; chunkIndex++) {
         if (abortRef.current) throw new Error("Transfer aborted");
-        log(
-          `Step3${label}`,
-          `  getChunk ${chunkIndex + 1}/${chunkSet.ChunkCount} — chunksetId=${chunkSet.ChunkSetId}`,
-        );
 
-        // Read chunk blob from source
-        const chunkRes = await client.query("xmc.contentTransfer.getChunk", {
-          params: {
-            path: {
-              transferId: subConfig.transferId,
-              chunksetId: chunkSet.ChunkSetId,
-              chunkId: chunkIndex,
-            },
-            query: { sitecoreContextId: subConfig.sourceContextId },
-          },
-          timeoutMs: CHUNK_TRANSFER_TIMEOUT_MS,
+        const chunkBlob = await getChunkWithRetry({
+          transferId: subConfig.transferId,
+          chunksetId: chunkSet.ChunkSetId,
+          chunkId: chunkIndex,
+          sourceContextId: subConfig.sourceContextId,
+          label,
+          logNote: `${chunkIndex + 1}/${chunkSet.ChunkCount}`,
         });
-
-        // client.query() wraps result in QueryResult; actual payload is at .data.data
-        // getChunk returns a Blob (raw .raif protobuf binary).
-        const rawChunkRes = chunkRes?.data as unknown;
-        const chunkBlob =
-          (rawChunkRes as { data?: Blob | File | null })?.data ?? null;
-        const chunkHttpRes = (
-          rawChunkRes as { response?: { status?: number; headers?: Headers } }
-        )?.response;
-        log(
-          `Step3${label}`,
-          `  getChunk ${chunkIndex} raw response` +
-            ` httpStatus=${chunkHttpRes?.status ?? "?"}` +
-            ` content-type=${chunkHttpRes?.headers?.get?.("content-type") ?? "?"}` +
-            ` type=${chunkBlob ? (chunkBlob instanceof Blob ? `Blob(type="${(chunkBlob as Blob).type}")` : typeof chunkBlob) : "null"}` +
-            ` size=${chunkBlob instanceof Blob ? (chunkBlob as Blob).size : "n/a"}`,
-          rawChunkRes,
-        );
-        if (!chunkBlob) {
-          logError(
-            `Step3${label}`,
-            `getChunk returned empty blob`,
-            rawChunkRes,
-          );
-          throw new Error(
-            `Failed to retrieve chunk ${chunkIndex} from chunk set ${chunkSet.ChunkSetId}`,
-          );
-        }
 
         // Send the raw Blob directly — DO NOT convert to ArrayBuffer.
         // The SDK defines saveChunk with bodySerializer:null and
@@ -314,77 +526,18 @@ export function useContentTransfer() {
         // to {} through JSON.stringify (loses all data), which is what caused
         // the server-side "Maximum call stack size exceeded" — Sitecore was
         // receiving an empty body and its error-handling path recursed.
-        // Sending the Blob directly preserves all bytes correctly.
         // isMedia must be explicitly passed — omitting the parameter (even though
         // the API spec marks it optional with default false) causes a 405 error.
-        log(
-          `Step3${label}`,
-          `  saveChunk ${chunkIndex + 1}/${chunkSet.ChunkCount} → dest (Blob size=${(chunkBlob as Blob).size}) isMedia=${isMedia} destCtx=${subConfig.destinationContextId}`,
-        );
-        let saveResAny!: {
-          error?: unknown;
-          data?: unknown;
-          response?: { status?: number };
-        };
-        for (let attempt = 0; attempt <= SAVE_CHUNK_MAX_RETRIES; attempt++) {
-          if (attempt > 0) {
-            const delayMs = SAVE_CHUNK_RETRY_BASE_MS * Math.pow(2, attempt - 1);
-            logWarn(
-              `Step3${label}`,
-              `  saveChunk retry ${attempt}/${SAVE_CHUNK_MAX_RETRIES} after ${delayMs}ms — chunkId=${chunkIndex}`,
-            );
-            await sleep(delayMs);
-          }
-          if (abortRef.current) throw new Error("Transfer aborted");
-          const saveRes = await client.mutate("xmc.contentTransfer.saveChunk", {
-            params: {
-              path: {
-                transferId: subConfig.transferId,
-                chunksetId: chunkSet.ChunkSetId,
-                chunkId: chunkIndex,
-              },
-              body: chunkBlob,
-              query: {
-                sitecoreContextId: subConfig.destinationContextId,
-                isMedia,
-              },
-            },
-            timeoutMs: CHUNK_TRANSFER_TIMEOUT_MS,
-          });
-          saveResAny = saveRes as unknown as {
-            error?: unknown;
-            data?: unknown;
-            response?: { status?: number };
-          };
-          log(
-            `Step3${label}`,
-            `  saveChunk attempt ${attempt + 1} response`,
-            saveResAny,
-          );
-          if (!saveResAny.error) break;
-          const httpStatus = saveResAny.response?.status;
-          if (httpStatus === 405) {
-            logError(`Step3${label}`, `saveChunk failed`, saveResAny.error);
-            throw new Error(
-              `saveChunk returned 405 Method Not Allowed (isMedia=${isMedia}). ` +
-                `The destination environment does not support the Content Transfer API (PUT /content/v1/transfers/.../chunks) through the marketplace SDK proxy. ` +
-                `Sitecore support ticket required. Details: source=${subConfig.sourceContextId}, dest=${subConfig.destinationContextId}, error=${JSON.stringify(saveResAny.error)}`,
-            );
-          }
-          const isRetryable =
-            typeof httpStatus === "number" && httpStatus >= 500;
-          if (!isRetryable || attempt === SAVE_CHUNK_MAX_RETRIES) {
-            logError(`Step3${label}`, `saveChunk failed`, saveResAny.error);
-            throw new Error(
-              `saveChunk failed (HTTP ${httpStatus ?? "?"}) for chunk ${chunkIndex} of chunkset ${chunkSet.ChunkSetId}: ${JSON.stringify(saveResAny.error)}`,
-            );
-          }
-          logWarn(
-            `Step3${label}`,
-            `  saveChunk transient error (HTTP ${httpStatus}), will retry`,
-            saveResAny.error,
-          );
-        }
+        await saveChunkWithRetry({
+          transferId: subConfig.transferId,
+          chunksetId: chunkSet.ChunkSetId,
+          chunkId: chunkIndex,
+          body: chunkBlob,
+          destinationContextId: subConfig.destinationContextId,
+          isMedia,
+          label,
+          logNote: `${chunkIndex + 1}/${chunkSet.ChunkCount}`,
+        });
         log(`Step3${label}`, `  ✓ Chunk ${chunkIndex} saved`);
 
         completedChunks++;
@@ -527,7 +680,11 @@ export function useContentTransfer() {
           );
       }
 
-      transferFileNames.push(consumeFileName);
+      // Push the RAW file name for Step 4 blob-state polling.
+      // Do NOT push consumeFileName — the "blob://" prefix is only valid for
+      // consumeFile. GetBlobState resolves the string as a literal Azure blob
+      // name, so the prefixed form always returns 404 BlobNotFound.
+      transferFileNames.push(fileName);
     }
 
     // ── Step 4: Poll getBlobState for ALL files after all sets complete ──
