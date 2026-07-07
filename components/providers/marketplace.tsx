@@ -30,7 +30,9 @@ export const MarketplaceProvider: React.FC<ClientSDKProviderProps> = ({
   const [error, setError] = useState<string | null>(null);
 
   // "loading" → "fading" → "done" as SDK becomes ready
-  const [overlayStage, setOverlayStage] = useState<"loading" | "fading" | "done">("loading");
+  const [overlayStage, setOverlayStage] = useState<
+    "loading" | "fading" | "done"
+  >("loading");
   // Tracks whether enough time has passed for the full logo animation to play (~3.2s)
   const [minTimeReady, setMinTimeReady] = useState(false);
   const [sdkReady, setSdkReady] = useState(false);
@@ -67,7 +69,7 @@ export const MarketplaceProvider: React.FC<ClientSDKProviderProps> = ({
 
   // Minimum display time — enough for the full entrance animation (~2.3s) + brief pause
   useEffect(() => {
-    const t = setTimeout(() => setMinTimeReady(true), 3200);
+    const t = setTimeout(() => setMinTimeReady(true), 2100);
     return () => clearTimeout(t);
   }, []);
 
@@ -83,7 +85,10 @@ export const MarketplaceProvider: React.FC<ClientSDKProviderProps> = ({
     if (sdkReady && minTimeReady) {
       const t1 = setTimeout(() => setOverlayStage("fading"), 0);
       const t2 = setTimeout(() => setOverlayStage("done"), 500);
-      return () => { clearTimeout(t1); clearTimeout(t2); };
+      return () => {
+        clearTimeout(t1);
+        clearTimeout(t2);
+      };
     }
   }, [sdkReady, minTimeReady]);
 
@@ -94,7 +99,8 @@ export const MarketplaceProvider: React.FC<ClientSDKProviderProps> = ({
         <div>{error}</div>
         <div>
           Please check if the client SDK is loaded inside Sitecore Marketplace
-          parent window and you have properly set your app&apos;s extension points.
+          parent window and you have properly set your app&apos;s extension
+          points.
         </div>
       </div>
     );
