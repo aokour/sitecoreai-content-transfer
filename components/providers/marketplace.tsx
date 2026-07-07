@@ -13,6 +13,7 @@ import {
   useEffect,
   useState,
 } from "react";
+import { AeLogoAnimated } from "@/components/AeLogoAnimated";
 
 interface ClientSDKProviderProps {
   children: ReactNode;
@@ -27,7 +28,12 @@ export const MarketplaceProvider: React.FC<ClientSDKProviderProps> = ({
   const [client, setClient] = useState<ClientSDK | null>(null);
   const [appContext, setAppContext] = useState<ApplicationContext | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [loading, setLoading] = useState<boolean>(false);
+
+  // "loading" → "fading" → "done" as SDK becomes ready
+  const [overlayStage, setOverlayStage] = useState<"loading" | "fading" | "done">("loading");
+  // Tracks whether enough time has passed for the full logo animation to play (~3.2s)
+  const [minTimeReady, setMinTimeReady] = useState(false);
+  const [sdkReady, setSdkReady] = useState(false);
 
   useEffect(() => {
     if (client) {
@@ -48,23 +54,38 @@ export const MarketplaceProvider: React.FC<ClientSDKProviderProps> = ({
         timeout: 10 * 60 * 1000, // 10 min — large binary chunks (90–200 MB) take 15–60s through the PostMessage bridge
       };
       try {
-        setLoading(true);
         const client = await ClientSDK.init(config);
         setClient(client);
       } catch (error) {
         console.error("Error initializing client SDK", error);
         setError("Error initializing client SDK");
-      } finally {
-        setLoading(false);
       }
     };
 
     init();
   }, []);
 
-  if (loading) {
-    return <div>Attempting to connect to Sitecore Marketplace...</div>;
-  }
+  // Minimum display time — enough for the full entrance animation (~2.3s) + brief pause
+  useEffect(() => {
+    const t = setTimeout(() => setMinTimeReady(true), 3200);
+    return () => clearTimeout(t);
+  }, []);
+
+  // Mark SDK ready once both client and appContext are set
+  useEffect(() => {
+    if (client && appContext) {
+      setTimeout(() => setSdkReady(true), 0);
+    }
+  }, [client, appContext]);
+
+  // Start fade only when BOTH the animation has played AND the SDK is ready
+  useEffect(() => {
+    if (sdkReady && minTimeReady) {
+      const t1 = setTimeout(() => setOverlayStage("fading"), 0);
+      const t2 = setTimeout(() => setOverlayStage("done"), 500);
+      return () => { clearTimeout(t1); clearTimeout(t2); };
+    }
+  }, [sdkReady, minTimeReady]);
 
   if (error) {
     return (
@@ -73,26 +94,33 @@ export const MarketplaceProvider: React.FC<ClientSDKProviderProps> = ({
         <div>{error}</div>
         <div>
           Please check if the client SDK is loaded inside Sitecore Marketplace
-          parent window and you have properly set your app's extention points.
+          parent window and you have properly set your app&apos;s extension points.
         </div>
       </div>
     );
   }
 
-  if (!client) {
-    return null;
-  }
-
-  if (!appContext) {
-    return null;
-  }
-
   return (
-    <ClientSDKContext.Provider value={client}>
-      <AppContextContext.Provider value={appContext}>
-        {children}
-      </AppContextContext.Provider>
-    </ClientSDKContext.Provider>
+    <>
+      {overlayStage !== "done" && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-background pointer-events-none"
+          style={{
+            opacity: overlayStage === "fading" ? 0 : 1,
+            transition: "opacity 0.5s ease-out",
+          }}
+        >
+          <AeLogoAnimated className="w-72" animate={true} />
+        </div>
+      )}
+      {client && appContext && (
+        <ClientSDKContext.Provider value={client}>
+          <AppContextContext.Provider value={appContext}>
+            {children}
+          </AppContextContext.Provider>
+        </ClientSDKContext.Provider>
+      )}
+    </>
   );
 };
 
