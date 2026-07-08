@@ -110,12 +110,23 @@ export const MarketplaceProvider: React.FC<ClientSDKProviderProps> = ({
     <>
       {overlayStage !== "done" && (
         <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-background pointer-events-none"
+          className="fixed inset-0 z-50 flex flex-col items-center justify-center gap-3 bg-background pointer-events-none"
           style={{
             opacity: overlayStage === "fading" ? 0 : 1,
             transition: "opacity 0.5s ease-out",
           }}
         >
+          <p
+            className="text-2xl"
+            style={{
+              fontFamily: "var(--font-libre-franklin), sans-serif",
+              fontWeight: 700,
+              lineHeight: "normal",
+              color: "#003057",
+            }}
+          >
+            SitecoreAI Content Transfer By
+          </p>
           <AeLogoAnimated className="w-72" animate={true} />
         </div>
       )}
