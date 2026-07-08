@@ -107,11 +107,6 @@ export const MERGE_STRATEGY_OPTIONS: { value: MergeStrategy; label: string; desc
     description: "Leave untouched if the item already exists in the destination",
   },
   {
-    value: "LatestWin",
-    label: "Latest Wins",
-    description: "Keep whichever version was most recently modified",
-  },
-  {
     value: "OverrideExistingTree",
     label: "Override Tree",
     description: "Override the entire tree rooted at this item",
