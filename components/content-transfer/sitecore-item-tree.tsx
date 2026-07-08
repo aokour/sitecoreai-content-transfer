@@ -383,7 +383,10 @@ function DualTreeRow({
             : undefined
         }
         className={cn(
-          "group flex items-center gap-1.5 px-2 py-1.5 rounded-md select-none text-sm transition-colors",
+          // Fixed height (not content-driven) so source rows — which always mount
+          // the Add-to-Transfer button, even invisibly — stay exactly as tall as
+          // destination rows. Otherwise the two panes drift out of sync going down.
+          "group flex h-8 items-center gap-1.5 px-2 rounded-md select-none text-sm transition-colors",
           // Ghost styling
           isGhost && "opacity-50 italic cursor-default",
           isGhost && "border-l-2 border-dashed border-muted-foreground/30 ml-0.5",
