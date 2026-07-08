@@ -3,6 +3,13 @@
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -23,7 +30,7 @@ import {
   type MergeStrategy,
   type TransferScope,
 } from "@/lib/content-transfer";
-import { AlertTriangle, Check, ChevronDown, CloudOff, Plus, Trash2 } from "lucide-react";
+import { AlertTriangle, Check, ChevronDown, CloudOff, Trash2 } from "lucide-react";
 import { useState } from "react";
 import { cn } from "@/lib/utils";
 import { ItemFieldComparison } from "./item-field-comparison";
@@ -58,8 +65,9 @@ export function InlineItemSelector({
   const [expandedPaths, setExpandedPaths] = useState<Set<string>>(new Set());
   const [focusedNode, setFocusedNode] = useState<DualTreeNode | null>(null);
   const [isComparisonOpen, setIsComparisonOpen] = useState(false);
-  const [pendingScope, setPendingScope] = useState<TransferScope>(DEFAULT_SCOPE);
-  const [pendingStrategy, setPendingStrategy] = useState<MergeStrategy>(DEFAULT_STRATEGY);
+  const [addModalNode, setAddModalNode] = useState<DualTreeNode | null>(null);
+  const [modalScope, setModalScope] = useState<TransferScope>(DEFAULT_SCOPE);
+  const [modalStrategy, setModalStrategy] = useState<MergeStrategy>(DEFAULT_STRATEGY);
 
   const { getDualChildren, expandNode, isLoadingPath, getError } = useDualTree(
     sourceContextId,
@@ -80,13 +88,23 @@ export function InlineItemSelector({
     setIsComparisonOpen(false);
   }
 
-  function handleAddFocused() {
-    if (!focusedNode || !focusedNode.existsInSource) return;
-    if (items.some((i) => i.itemPath === focusedNode.path)) return;
+  function handleRequestAdd(node: DualTreeNode) {
+    setAddModalNode(node);
+    setModalScope(DEFAULT_SCOPE);
+    setModalStrategy(DEFAULT_STRATEGY);
+  }
+
+  function handleConfirmAdd() {
+    if (!addModalNode) return;
+    if (items.some((i) => i.itemPath === addModalNode.path)) {
+      setAddModalNode(null);
+      return;
+    }
     onChange([
       ...items,
-      { itemPath: focusedNode.path, scope: pendingScope, mergeStrategy: pendingStrategy },
+      { itemPath: addModalNode.path, scope: modalScope, mergeStrategy: modalStrategy },
     ]);
+    setAddModalNode(null);
   }
 
   function updateItem(index: number, patch: Partial<DataTreeItem>) {
@@ -163,6 +181,7 @@ export function InlineItemSelector({
                 expandedPaths={expandedPaths}
                 onToggleExpand={handleToggleExpand}
                 existingPaths={existingPaths}
+                onAdd={handleRequestAdd}
               />
             </div>
             <div className="px-3 py-2 min-w-0">
@@ -193,79 +212,9 @@ export function InlineItemSelector({
         </div>
       )}
 
-      {/* Action strip + collapsible field comparison — shown when a source node is focused */}
-      {focusedNode && focusedNode.existsInSource && sourceContextId && (() => {
-        const isFocusedAlreadyAdded = items.some((i) => i.itemPath === focusedNode.path);
-        return (
+      {/* Collapsible field comparison — shown when a source node is focused */}
+      {focusedNode && focusedNode.existsInSource && sourceContextId && (
           <div className="mt-3 space-y-2">
-            {/* Action strip */}
-            <div className="flex flex-wrap items-center gap-2 border rounded-lg px-4 py-2.5 bg-muted/30">
-              <code className="font-mono text-sm truncate text-muted-foreground flex-1 min-w-0">
-                {focusedNode.path}
-              </code>
-              <div className="flex items-center gap-2 shrink-0">
-                {/* Scope */}
-                <Select
-                  value={pendingScope}
-                  onValueChange={(v) => setPendingScope(v as TransferScope)}
-                  disabled={isFocusedAlreadyAdded}
-                >
-                  <SelectTrigger className="h-8 text-xs w-[150px]">
-                    <span className="truncate font-medium">
-                      {SCOPE_OPTIONS.find((o) => o.value === pendingScope)?.label ?? pendingScope}
-                    </span>
-                  </SelectTrigger>
-                  <SelectContent>
-                    {SCOPE_OPTIONS.map((opt) => (
-                      <SelectItem key={opt.value} value={opt.value}>
-                        <div className="py-0.5">
-                          <div className="font-medium text-sm">{opt.label}</div>
-                          <div className="text-xs text-muted-foreground mt-0.5">{opt.description}</div>
-                        </div>
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-
-                {/* Merge strategy */}
-                <Select
-                  value={pendingStrategy}
-                  onValueChange={(v) => setPendingStrategy(v as MergeStrategy)}
-                  disabled={isFocusedAlreadyAdded}
-                >
-                  <SelectTrigger className="h-8 text-xs w-[160px]">
-                    <span className="truncate font-medium">
-                      {MERGE_STRATEGY_OPTIONS.find((o) => o.value === pendingStrategy)?.label ?? pendingStrategy}
-                    </span>
-                  </SelectTrigger>
-                  <SelectContent>
-                    {MERGE_STRATEGY_OPTIONS.map((opt) => (
-                      <SelectItem key={opt.value} value={opt.value}>
-                        <div className="py-0.5">
-                          <div className="font-medium text-sm">{opt.label}</div>
-                          <div className="text-xs text-muted-foreground mt-0.5">{opt.description}</div>
-                        </div>
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-
-                {/* Add button */}
-                <Button
-                  size="sm"
-                  variant={isFocusedAlreadyAdded ? "outline" : "default"}
-                  disabled={isFocusedAlreadyAdded}
-                  onClick={handleAddFocused}
-                >
-                  {isFocusedAlreadyAdded ? (
-                    <><Check className="size-4 mr-1.5" />Already Added</>
-                  ) : (
-                    <><Plus className="size-4 mr-1.5" />Add to Transfer</>
-                  )}
-                </Button>
-              </div>
-            </div>
-
             {/* Collapsible field comparison */}
             <div className="border rounded-lg overflow-hidden">
               <button
@@ -308,8 +257,7 @@ export function InlineItemSelector({
               )}
             </div>
           </div>
-        );
-      })()}
+      )}
 
       <Separator className="my-6" />
 
@@ -459,6 +407,87 @@ export function InlineItemSelector({
           A human-readable name to identify this transfer in the history.
         </p>
       </div>
+
+      {/* Add to Transfer modal */}
+      <Dialog open={!!addModalNode} onOpenChange={(open) => !open && setAddModalNode(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Add to Transfer</DialogTitle>
+            {addModalNode && (
+              <code className="font-mono text-xs text-muted-foreground break-all">
+                {addModalNode.path}
+              </code>
+            )}
+          </DialogHeader>
+
+          <div className="space-y-5">
+            <div className="space-y-2">
+              <Label className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                Scope
+              </Label>
+              <Select
+                value={modalScope}
+                onValueChange={(v) => setModalScope(v as TransferScope)}
+              >
+                <SelectTrigger className="w-full">
+                  <span className="truncate text-sm font-medium">
+                    {SCOPE_OPTIONS.find((o) => o.value === modalScope)?.label ?? modalScope}
+                  </span>
+                </SelectTrigger>
+                <SelectContent>
+                  {SCOPE_OPTIONS.map((opt) => (
+                    <SelectItem key={opt.value} value={opt.value}>
+                      <div className="py-0.5">
+                        <div className="font-medium text-sm">{opt.label}</div>
+                        <div className="text-xs text-muted-foreground mt-0.5">{opt.description}</div>
+                      </div>
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="space-y-2">
+              <Label className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                Merge Strategy
+              </Label>
+              <Select
+                value={modalStrategy}
+                onValueChange={(v) => setModalStrategy(v as MergeStrategy)}
+              >
+                <SelectTrigger className="w-full">
+                  <span className="truncate text-sm font-medium">
+                    {MERGE_STRATEGY_OPTIONS.find((o) => o.value === modalStrategy)?.label ?? modalStrategy}
+                  </span>
+                </SelectTrigger>
+                <SelectContent>
+                  {MERGE_STRATEGY_OPTIONS.map((opt) => (
+                    <SelectItem key={opt.value} value={opt.value}>
+                      <div className="py-0.5">
+                        <div className="font-medium text-sm">{opt.label}</div>
+                        <div className="text-xs text-muted-foreground mt-0.5">{opt.description}</div>
+                      </div>
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-muted-foreground">
+                {MERGE_STRATEGY_OPTIONS.find((o) => o.value === modalStrategy)?.description}
+              </p>
+            </div>
+          </div>
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setAddModalNode(null)}>
+              Cancel
+            </Button>
+            <Button onClick={handleConfirmAdd}>
+              <Check className="size-4 mr-1.5" />
+              Add to Transfer
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

@@ -1,6 +1,7 @@
 "use client";
 
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
 import type { SitecoreTreeNode } from "@/hooks/use-sitecore-tree";
 import type { DualTreeNode } from "@/hooks/use-dual-tree";
@@ -302,6 +303,7 @@ interface DualTreeRowProps {
   expandedPaths: Set<string>;
   onToggleExpand: (path: string) => void;
   existingPaths?: string[];
+  onAdd?: (node: DualTreeNode) => void;
 }
 
 function DualTreeRow({
@@ -317,6 +319,7 @@ function DualTreeRow({
   expandedPaths,
   onToggleExpand,
   existingPaths = [],
+  onAdd,
 }: DualTreeRowProps) {
   const isExpanded = expandedPaths.has(node.path);
   const [iconError, setIconError] = useState(false);
@@ -345,6 +348,11 @@ function DualTreeRow({
 
   function handleSelect() {
     if (isSelectable) onSelect(node);
+  }
+
+  function handleAdd(e: React.MouseEvent) {
+    e.stopPropagation();
+    onAdd?.(node);
   }
 
   const templateLabel =
@@ -457,17 +465,31 @@ function DualTreeRow({
           <Check className="shrink-0 size-3.5 text-primary" aria-label="Added to transfer" />
         )}
 
+        {/* Add to transfer — revealed on hover, source side only. Always laid out
+            (opacity-toggled, not hidden/inline-flex-toggled) so appearing on
+            hover doesn't reflow/shift the row. */}
+        {onAdd && side === "source" && !isGhost && !isAlreadyAdded && (
+          <Button
+            variant="outline"
+            size="sm"
+            className="shrink-0 inline-flex h-6 px-2 text-xs opacity-0 pointer-events-none transition-opacity group-hover:opacity-100 group-hover:pointer-events-auto"
+            onClick={handleAdd}
+          >
+            Add to Transfer
+          </Button>
+        )}
+
         {/* Modified indicator */}
         {node.isDifferent && !isGhost && (
           <span className="shrink-0 size-2 rounded-full bg-amber-400 dark:bg-amber-500" aria-label="Modified" />
         )}
 
-        {/* Template badge */}
+        {/* Template badge — same opacity-toggle reasoning as the Add button above */}
         {templateLabel && !isGhost && (
           <Badge
             colorScheme="neutral"
             size="sm"
-            className="shrink-0 hidden group-hover:inline-flex"
+            className="shrink-0 inline-flex opacity-0 transition-opacity group-hover:opacity-100"
           >
             {templateLabel}
           </Badge>
@@ -502,6 +524,7 @@ function DualTreeRow({
               expandedPaths={expandedPaths}
               onToggleExpand={onToggleExpand}
               existingPaths={existingPaths}
+              onAdd={onAdd}
             />
           ))}
         </>
@@ -535,6 +558,8 @@ export interface DualTreePaneProps {
   onToggleExpand: (path: string) => void;
   /** Paths already added to the transfer — shown with a check icon on source side */
   existingPaths?: string[];
+  /** Called when the hover "Add to Transfer" button is clicked on a source row */
+  onAdd?: (node: DualTreeNode) => void;
 }
 
 export function DualTreePane({
@@ -549,6 +574,7 @@ export function DualTreePane({
   expandedPaths,
   onToggleExpand,
   existingPaths = [],
+  onAdd,
 }: DualTreePaneProps) {
   // Trigger initial load of the root on mount
   useEffect(() => {
@@ -603,6 +629,7 @@ export function DualTreePane({
           expandedPaths={expandedPaths}
           onToggleExpand={onToggleExpand}
           existingPaths={existingPaths}
+          onAdd={onAdd}
         />
       ))}
     </div>

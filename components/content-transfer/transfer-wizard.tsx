@@ -67,6 +67,19 @@ export function TransferWizard({
   const sourceEnv = environments.find((e) => e.context.preview === sourceId);
   const destEnv = environments.find((e) => e.context.preview === destinationId);
 
+  // Reflect the transfer's final outcome on the last stepper step, instead of
+  // leaving it as "active" once the transfer has actually finished/failed.
+  const wizardSteps = STEPS.map((step, i) => {
+    if (i !== STEPS.length - 1) return step;
+    if (phase === "completed") {
+      return { ...step, status: "completed" as const, description: "Completed" };
+    }
+    if (phase === "failed") {
+      return { ...step, description: "Failed" };
+    }
+    return step;
+  });
+
   // ── Validation ────────────────────────────────────────────────────────────
   const step0Valid = !!sourceId && !!destinationId && sourceId !== destinationId;
   const step1Valid =
@@ -221,7 +234,7 @@ export function TransferWizard({
         <Separator />
 
         {/* Vertical stepper */}
-        <Stepper steps={STEPS} currentStep={currentStep} orientation="vertical" />
+        <Stepper steps={wizardSteps} currentStep={currentStep} orientation="vertical" />
       </aside>
 
       {/* ── Main content ─────────────────────────────────────────────────── */}
@@ -261,14 +274,6 @@ export function TransferWizard({
           {/* ── Step 1: Items ──────────────────────────────────────────── */}
           {currentStep === 1 && (
             <>
-              <CardHeader>
-                <CardTitle>Select Content Items</CardTitle>
-                <CardDescription>
-                  Browse the source content tree and click items to add them to
-                  your transfer. Use the destination pane to compare what already
-                  exists on the other side.
-                </CardDescription>
-              </CardHeader>
               <CardContent>
                 <InlineItemSelector
                   items={dataTrees}
@@ -356,14 +361,6 @@ export function TransferWizard({
                     })}
                   </div>
                 </div>
-
-                <Alert variant="warning">
-                  <AlertDescription>
-                    <strong>Note:</strong> Items with &quot;Override Existing&quot;
-                    strategy will overwrite content in the destination environment.
-                    This action cannot be undone.
-                  </AlertDescription>
-                </Alert>
               </CardContent>
             </>
           )}
