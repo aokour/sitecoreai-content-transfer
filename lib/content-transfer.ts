@@ -58,18 +58,6 @@ export interface BlobStateResponse {
   Actions?: Record<string, unknown>;
 }
 
-export interface TransferRecord {
-  transferId: string;
-  label: string;
-  sourceContextId: string;
-  destinationContextId: string;
-  sourceTenantName: string;
-  destinationTenantName: string;
-  createdAt: string; // ISO string
-  itemPaths: string[];
-  phase: TransferPhase;
-}
-
 export interface ResourceAccessEntry {
   resourceId: string;
   tenantId: string;
@@ -160,20 +148,6 @@ export function getPhaseColorScheme(phase: TransferPhase): StatusColorScheme {
     default:
       return "primary";
   }
-}
-
-export function formatTransferId(id: string): string {
-  if (id.length <= 16) return id;
-  return `${id.slice(0, 8)}...${id.slice(-4)}`;
-}
-
-export function isTransferActive(phase: TransferPhase): boolean {
-  return (
-    phase === "creating" ||
-    phase === "preparing" ||
-    phase === "transferring" ||
-    phase === "importing"
-  );
 }
 
 export function generateTransferId(): string {

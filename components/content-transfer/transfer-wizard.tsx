@@ -1,6 +1,5 @@
 "use client";
 
-import { useAppContext } from "@/components/providers/marketplace";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -13,26 +12,23 @@ import {
 } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
 import { Stepper } from "@/components/ui/stepper";
+import { Timeline } from "@/components/ui/timeline";
 import { EnvironmentSelector } from "./environment-selector";
 import { InlineItemSelector } from "./inline-item-selector";
 import { TransferProgressDisplay } from "./transfer-progress";
 import { useContentTransfer } from "@/hooks/use-content-transfer";
-import { useTransferHistory } from "@/hooks/use-transfer-history";
-import type {
-  DataTreeItem,
-  ResourceAccessEntry,
-  TransferRecord,
-} from "@/lib/content-transfer";
+import { useEnvironments } from "@/hooks/use-environments";
+import type { DataTreeItem } from "@/lib/content-transfer";
 import {
   generateTransferId,
   getEnvironmentLabel,
   MERGE_STRATEGY_OPTIONS,
   SCOPE_OPTIONS,
 } from "@/lib/content-transfer";
-import { ArrowLeft, ArrowRight, CheckCircle2, RotateCcw } from "lucide-react";
+import { ArrowLeft, ArrowRight, RotateCcw } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 const STEPS = [
   { label: "Environments", description: "Select source & destination" },
@@ -51,8 +47,6 @@ export function TransferWizard({
   initialDestinationId,
 }: TransferWizardProps) {
   const router = useRouter();
-  const appContext = useAppContext();
-  const { addTransfer, updateTransferPhase } = useTransferHistory();
   const { startTransfer, phase, progress, error, transferId, chunkSetsMetadata, isRunning } =
     useContentTransfer();
 
@@ -68,14 +62,7 @@ export function TransferWizard({
   const [dataTrees, setDataTrees] = useState<DataTreeItem[]>([]);
 
   // ── Derived environment info ──────────────────────────────────────────────
-  const environments = useMemo((): ResourceAccessEntry[] => {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const raw: any[] = appContext?.resourceAccess?.length
-      ? appContext.resourceAccess
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      : (appContext as any)?.resources ?? [];
-    return raw as ResourceAccessEntry[];
-  }, [appContext]);
+  const environments = useEnvironments();
 
   const sourceEnv = environments.find((e) => e.context.preview === sourceId);
   const destEnv = environments.find((e) => e.context.preview === destinationId);
@@ -95,21 +82,9 @@ export function TransferWizard({
       if (!sourceId || !destinationId || !sourceEnv || !destEnv) return;
       transferStartedRef.current = true;
       const tid = generateTransferId();
-      const record: TransferRecord = {
-        transferId: tid,
-        label: label.trim() || "Content Transfer",
-        sourceContextId: sourceId,
-        destinationContextId: destinationId,
-        sourceTenantName: getEnvironmentLabel(sourceEnv),
-        destinationTenantName: getEnvironmentLabel(destEnv),
-        createdAt: new Date().toISOString(),
-        itemPaths: dataTrees.map((d) => d.itemPath),
-        phase: "creating",
-      };
-      addTransfer(record);
       startTransfer({
         transferId: tid,
-        label: record.label,
+        label: label.trim() || "Content Transfer",
         sourceContextId: sourceId,
         destinationContextId: destinationId,
         sourceTenantName: getEnvironmentLabel(sourceEnv),
@@ -119,13 +94,6 @@ export function TransferWizard({
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentStep]);
-
-  // Sync phase changes back to localStorage
-  useEffect(() => {
-    if (transferId && phase !== "idle") {
-      updateTransferPhase(transferId, phase);
-    }
-  }, [transferId, phase, updateTransferPhase]);
 
   // ── Navigation ────────────────────────────────────────────────────────────
   function goNext() {
@@ -164,14 +132,36 @@ export function TransferWizard({
             <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
               Transfer Route
             </p>
-            <div className="text-xs font-medium truncate text-foreground">
-              {getEnvironmentLabel(sourceEnv)}
-            </div>
-            <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
-              <ArrowRight className="size-3 shrink-0" />
-              <span className="font-medium text-foreground truncate">
-                {getEnvironmentLabel(destEnv)}
-              </span>
+            <div className="rounded-md border bg-muted/30 p-3">
+              <Timeline.Root size="sm">
+                <Timeline.Item>
+                  <Timeline.Separator>
+                    <Timeline.Indicator size="sm" className="size-2 bg-primary" />
+                    <Timeline.Connector />
+                  </Timeline.Separator>
+                  <Timeline.Content className="gap-0.5 pb-2">
+                    <Timeline.Description className="text-[10px] font-semibold uppercase tracking-wide text-primary">
+                      Source
+                    </Timeline.Description>
+                    <Timeline.Title className="text-xs font-medium truncate">
+                      {getEnvironmentLabel(sourceEnv)}
+                    </Timeline.Title>
+                  </Timeline.Content>
+                </Timeline.Item>
+                <Timeline.Item>
+                  <Timeline.Separator>
+                    <Timeline.Indicator size="sm" className="size-2 bg-success-fg" />
+                  </Timeline.Separator>
+                  <Timeline.Content className="gap-0.5">
+                    <Timeline.Description className="text-[10px] font-semibold uppercase tracking-wide text-success-fg">
+                      Destination
+                    </Timeline.Description>
+                    <Timeline.Title className="text-xs font-medium truncate">
+                      {getEnvironmentLabel(destEnv)}
+                    </Timeline.Title>
+                  </Timeline.Content>
+                </Timeline.Item>
+              </Timeline.Root>
             </div>
           </div>
         )}
@@ -215,26 +205,16 @@ export function TransferWizard({
 
           {/* Step 3 completion actions */}
           {currentStep === 3 && phase === "completed" && (
-            <>
-              <Button
-                variant="outline"
-                className="w-full"
-                onClick={() => router.push(`/transfer/${transferId}`)}
-              >
-                <CheckCircle2 className="size-4 mr-2" />
-                View Details
-              </Button>
-              <Button
-                className="w-full"
-                onClick={() => {
-                  router.push("/transfer/new");
-                  window.location.reload();
-                }}
-              >
-                <RotateCcw className="size-4 mr-2" />
-                New Transfer
-              </Button>
-            </>
+            <Button
+              className="w-full"
+              onClick={() => {
+                router.push("/transfer/new");
+                window.location.reload();
+              }}
+            >
+              <RotateCcw className="size-4 mr-2" />
+              New Transfer
+            </Button>
           )}
         </div>
 
