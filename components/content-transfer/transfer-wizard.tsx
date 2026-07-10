@@ -156,7 +156,7 @@ export function TransferWizard({
                     <Timeline.Description className="text-[10px] font-semibold uppercase tracking-wide text-primary">
                       Source
                     </Timeline.Description>
-                    <Timeline.Title className="text-xs font-medium truncate">
+                    <Timeline.Title className="text-xs font-medium break-words">
                       {getEnvironmentLabel(sourceEnv)}
                     </Timeline.Title>
                   </Timeline.Content>
@@ -169,7 +169,7 @@ export function TransferWizard({
                     <Timeline.Description className="text-[10px] font-semibold uppercase tracking-wide text-success-fg">
                       Destination
                     </Timeline.Description>
-                    <Timeline.Title className="text-xs font-medium truncate">
+                    <Timeline.Title className="text-xs font-medium break-words">
                       {getEnvironmentLabel(destEnv)}
                     </Timeline.Title>
                   </Timeline.Content>

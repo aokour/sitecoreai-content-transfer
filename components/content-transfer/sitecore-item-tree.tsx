@@ -3,11 +3,13 @@
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import type { SitecoreTreeNode } from "@/hooks/use-sitecore-tree";
-import type { DualTreeNode } from "@/hooks/use-dual-tree";
+import type { DualTreeNode, SideFetchError } from "@/hooks/use-dual-tree";
 import { transformIconUrl } from "@/hooks/use-dual-tree";
 import { cn } from "@/lib/utils";
 import {
+  AlertTriangle,
   Check,
   ChevronRight,
   CloudOff,
@@ -290,6 +292,38 @@ export function SitecoreItemTree({
 // Used by the dual-pane tree picker to render source and destination sides
 // with ghost nodes and modification indicators.
 
+/** Shared by DualTreeRow (per-row) and DualTreePane (root-level) — a compact,
+ * always-clickable, keyboard/touch-accessible indicator for a children-fetch
+ * error on one side. "kind" only changes color/message, not interactivity. */
+function ChildrenFetchErrorIndicator({
+  error,
+  onRetry,
+}: {
+  error: SideFetchError;
+  onRetry: () => void;
+}) {
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <button
+          type="button"
+          className={cn(
+            "shrink-0",
+            error.kind === "hard" ? "text-danger-fg" : "text-warning-fg",
+          )}
+          onClick={(e) => {
+            e.stopPropagation();
+            onRetry();
+          }}
+        >
+          <AlertTriangle className="size-3.5" />
+        </button>
+      </TooltipTrigger>
+      <TooltipContent>{error.message} — click to retry</TooltipContent>
+    </Tooltip>
+  );
+}
+
 interface DualTreeRowProps {
   node: DualTreeNode;
   side: "source" | "destination";
@@ -297,7 +331,7 @@ interface DualTreeRowProps {
   getDualChildren: (path: string) => DualTreeNode[] | undefined;
   expandNode: (path: string) => void;
   isLoadingPath: (path: string) => boolean;
-  getError: (path: string) => string | null;
+  getError: (path: string, side: "source" | "destination") => SideFetchError | null;
   selectedPath: string | null;
   onSelect: (node: DualTreeNode) => void;
   expandedPaths: Set<string>;
@@ -325,7 +359,7 @@ function DualTreeRow({
   const [iconError, setIconError] = useState(false);
   const children = getDualChildren(node.path);
   const isLoading = isLoadingPath(node.path);
-  const nodeError = getError(node.path);
+  const nodeError = getError(node.path, side);
   const isSelected = selectedPath === node.path;
   const isAlreadyAdded = side === "source" && existingPaths.includes(node.path);
 
@@ -341,7 +375,10 @@ function DualTreeRow({
     if (!node.hasChildren) return;
     const next = !isExpanded;
     onToggleExpand(node.path);
-    if (next && children === undefined) {
+    // Re-fetch on expand if we've never loaded this path, or if the last
+    // attempt errored on this side — collapsing and re-expanding a row is a
+    // natural, discoverable way to retry, not just the error icon's onClick.
+    if (next && (children === undefined || nodeError)) {
       expandNode(node.path);
     }
   }
@@ -487,6 +524,15 @@ function DualTreeRow({
           <span className="shrink-0 size-2 rounded-full bg-amber-400 dark:bg-amber-500" aria-label="Modified" />
         )}
 
+        {/* Children-fetch error for this side — an icon, not a block, so it never
+            adds row height (which would break the source/destination row sync). */}
+        {nodeError && isExpanded && (
+          <ChildrenFetchErrorIndicator
+            error={nodeError}
+            onRetry={() => expandNode(node.path)}
+          />
+        )}
+
         {/* Template badge — same opacity-toggle reasoning as the Add button above */}
         {templateLabel && !isGhost && (
           <Badge
@@ -499,18 +545,10 @@ function DualTreeRow({
         )}
       </div>
 
-      {/* Error */}
-      {nodeError && isExpanded && (
-        <div
-          className="text-xs text-danger-fg px-2 py-1"
-          style={{ paddingLeft: `${8 + (depth + 1) * 16}px` }}
-        >
-          {nodeError}
-        </div>
-      )}
-
-      {/* Children */}
-      {isExpanded && children && children.length > 0 && (
+      {/* Children — suppressed on a hard error for this side; the error+retry
+          line above already covers that state, and the merged list would
+          otherwise misleadingly show only the other side's (ghosted) items. */}
+      {nodeError?.kind !== "hard" && isExpanded && children && children.length > 0 && (
         <>
           {children.map((child) => (
             <DualTreeRow
@@ -533,7 +571,7 @@ function DualTreeRow({
         </>
       )}
 
-      {isExpanded && children && children.length === 0 && (
+      {nodeError?.kind !== "hard" && isExpanded && children && children.length === 0 && (
         <div
           className="text-xs text-muted-foreground px-2 py-1 italic"
           style={{ paddingLeft: `${8 + (depth + 1) * 16}px` }}
@@ -553,7 +591,7 @@ export interface DualTreePaneProps {
   getDualChildren: (path: string) => DualTreeNode[] | undefined;
   expandNode: (path: string) => void;
   isLoadingPath: (path: string) => boolean;
-  getError: (path: string) => string | null;
+  getError: (path: string, side: "source" | "destination") => SideFetchError | null;
   selectedPath: string | null;
   onSelect: (node: DualTreeNode) => void;
   /** Shared expansion state owned by the parent */
@@ -587,7 +625,7 @@ export function DualTreePane({
 
   const rootChildren = getDualChildren(rootPath);
   const isLoading = isLoadingPath(rootPath);
-  const rootError = getError(rootPath);
+  const rootError = getError(rootPath, side);
 
   if (isLoading && !rootChildren) {
     return (
@@ -598,25 +636,57 @@ export function DualTreePane({
     );
   }
 
-  if (rootError && !rootChildren) {
+  // A hard failure on THIS side takes priority over rendering the merged list —
+  // even if rootChildren has entries (from the other side succeeding), showing
+  // them here would misleadingly look like "nothing exists on this side" rather
+  // than "this side's fetch failed."
+  if (rootError?.kind === "hard") {
     return (
       <div className="py-8 text-center text-sm text-danger-fg">
         <p className="font-medium">Failed to load tree</p>
-        <p className="text-xs mt-1">{rootError}</p>
+        <p className="text-xs mt-1">{rootError.message}</p>
+        <button
+          type="button"
+          className="mt-2 text-xs underline hover:no-underline"
+          onClick={() => expandNode(rootPath)}
+        >
+          Retry
+        </button>
       </div>
     );
   }
 
   if (!rootChildren || rootChildren.length === 0) {
     return (
-      <div className="py-8 text-center text-sm text-muted-foreground">
-        No items found
+      <div>
+        {/* Root-level partial error — no parent row exists at the root to
+            attach this to, so it's rendered inline above the (possibly
+            empty) list instead of being silently dropped. */}
+        {rootError?.kind === "partial" && (
+          <div className="flex items-center gap-1.5 px-2 py-1">
+            <ChildrenFetchErrorIndicator
+              error={rootError}
+              onRetry={() => expandNode(rootPath)}
+            />
+          </div>
+        )}
+        <div className="py-8 text-center text-sm text-muted-foreground">
+          No items found
+        </div>
       </div>
     );
   }
 
   return (
     <div role="tree" className="space-y-0.5">
+      {rootError?.kind === "partial" && (
+        <div className="flex items-center gap-1.5 px-2 py-1">
+          <ChildrenFetchErrorIndicator
+            error={rootError}
+            onRetry={() => expandNode(rootPath)}
+          />
+        </div>
+      )}
       {rootChildren.map((node) => (
         <DualTreeRow
           key={node.path}

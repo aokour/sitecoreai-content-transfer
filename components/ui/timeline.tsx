@@ -142,7 +142,10 @@ function TimelineContent({ className, ...props }: TimelineContentProps) {
   return (
     <div
       data-slot="timeline-content"
-      className={cn("flex flex-col gap-1", className)}
+      // flex-1 min-w-0 so this can actually shrink below its content's natural
+      // width — otherwise a truncate/ellipsis on a Timeline.Title inside it is a
+      // no-op and long text just overflows past the timeline's fixed-width column.
+      className={cn("flex flex-1 min-w-0 flex-col gap-1", className)}
       {...props}
     />
   );
