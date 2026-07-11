@@ -47,16 +47,25 @@ export function TransferWizard({
   initialDestinationId,
 }: TransferWizardProps) {
   const router = useRouter();
-  const { startTransfer, phase, progress, error, transferId, chunkSetsMetadata, isRunning } =
-    useContentTransfer();
+  const {
+    startTransfer,
+    phase,
+    progress,
+    error,
+    transferId,
+    chunkSetsMetadata,
+    isRunning,
+  } = useContentTransfer();
 
   // ── Step state ────────────────────────────────────────────────────────────
   const [currentStep, setCurrentStep] = useState(0);
 
   // ── Form state ────────────────────────────────────────────────────────────
-  const [sourceId, setSourceId] = useState<string | null>(initialSourceId ?? null);
+  const [sourceId, setSourceId] = useState<string | null>(
+    initialSourceId ?? null,
+  );
   const [destinationId, setDestinationId] = useState<string | null>(
-    initialDestinationId ?? null
+    initialDestinationId ?? null,
   );
   const [label, setLabel] = useState("");
   const [dataTrees, setDataTrees] = useState<DataTreeItem[]>([]);
@@ -72,7 +81,11 @@ export function TransferWizard({
   const wizardSteps = STEPS.map((step, i) => {
     if (i !== STEPS.length - 1) return step;
     if (phase === "completed") {
-      return { ...step, status: "completed" as const, description: "Completed" };
+      return {
+        ...step,
+        status: "completed" as const,
+        description: "Completed",
+      };
     }
     if (phase === "failed") {
       return { ...step, description: "Failed" };
@@ -81,7 +94,8 @@ export function TransferWizard({
   });
 
   // ── Validation ────────────────────────────────────────────────────────────
-  const step0Valid = !!sourceId && !!destinationId && sourceId !== destinationId;
+  const step0Valid =
+    !!sourceId && !!destinationId && sourceId !== destinationId;
   const step1Valid =
     dataTrees.length > 0 &&
     dataTrees.every((item) => item.itemPath.trim().length > 0);
@@ -131,7 +145,9 @@ export function TransferWizard({
 
         {/* Page title */}
         <div>
-          <h1 className="text-sm font-semibold leading-tight">New Content Transfer</h1>
+          <h1 className="text-sm font-semibold leading-tight">
+            New Content Transfer
+          </h1>
           <p className="text-xs text-muted-foreground mt-1 leading-snug">
             Configure and start a content transfer between environments
           </p>
@@ -149,7 +165,10 @@ export function TransferWizard({
               <Timeline.Root size="sm">
                 <Timeline.Item>
                   <Timeline.Separator>
-                    <Timeline.Indicator size="sm" className="size-2 bg-primary" />
+                    <Timeline.Indicator
+                      size="sm"
+                      className="size-2 bg-primary"
+                    />
                     <Timeline.Connector />
                   </Timeline.Separator>
                   <Timeline.Content className="gap-0.5 pb-2">
@@ -163,7 +182,10 @@ export function TransferWizard({
                 </Timeline.Item>
                 <Timeline.Item>
                   <Timeline.Separator>
-                    <Timeline.Indicator size="sm" className="size-2 bg-success-fg" />
+                    <Timeline.Indicator
+                      size="sm"
+                      className="size-2 bg-success-fg"
+                    />
                   </Timeline.Separator>
                   <Timeline.Content className="gap-0.5">
                     <Timeline.Description className="text-[10px] font-semibold uppercase tracking-wide text-success-fg">
@@ -234,7 +256,11 @@ export function TransferWizard({
         <Separator />
 
         {/* Vertical stepper */}
-        <Stepper steps={wizardSteps} currentStep={currentStep} orientation="vertical" />
+        <Stepper
+          steps={wizardSteps}
+          currentStep={currentStep}
+          orientation="vertical"
+        />
       </aside>
 
       {/* ── Main content ─────────────────────────────────────────────────── */}
@@ -261,9 +287,9 @@ export function TransferWizard({
                 {environments.length === 0 && (
                   <Alert variant="warning">
                     <AlertDescription>
-                      No environments found in application context. Ensure this app
-                      has been granted access to XM Cloud tenants in the Sitecore
-                      Cloud Portal.
+                      No environments found in application context. Ensure this
+                      app has been granted access to SitecoreAI environments in
+                      the Sitecore Cloud Portal.
                     </AlertDescription>
                   </Alert>
                 )}
@@ -280,8 +306,12 @@ export function TransferWizard({
                   onChange={setDataTrees}
                   sourceContextId={sourceId}
                   destinationContextId={destinationId}
-                  sourceEnvName={sourceEnv ? getEnvironmentLabel(sourceEnv) : undefined}
-                  destinationEnvName={destEnv ? getEnvironmentLabel(destEnv) : undefined}
+                  sourceEnvName={
+                    sourceEnv ? getEnvironmentLabel(sourceEnv) : undefined
+                  }
+                  destinationEnvName={
+                    destEnv ? getEnvironmentLabel(destEnv) : undefined
+                  }
                   label={label}
                   onLabelChange={setLabel}
                 />
@@ -306,13 +336,21 @@ export function TransferWizard({
                   <h4 className="text-sm font-medium">Environments</h4>
                   <div className="flex items-center gap-3 text-sm">
                     <div className="flex-1 rounded-md bg-muted p-2.5 text-center">
-                      <p className="font-medium">{sourceEnv ? getEnvironmentLabel(sourceEnv) : ""}</p>
-                      <p className="text-xs text-muted-foreground mt-0.5">Source</p>
+                      <p className="font-medium">
+                        {sourceEnv ? getEnvironmentLabel(sourceEnv) : ""}
+                      </p>
+                      <p className="text-xs text-muted-foreground mt-0.5">
+                        Source
+                      </p>
                     </div>
                     <ArrowRight className="size-5 text-muted-foreground shrink-0" />
                     <div className="flex-1 rounded-md bg-muted p-2.5 text-center">
-                      <p className="font-medium">{destEnv ? getEnvironmentLabel(destEnv) : ""}</p>
-                      <p className="text-xs text-muted-foreground mt-0.5">Destination</p>
+                      <p className="font-medium">
+                        {destEnv ? getEnvironmentLabel(destEnv) : ""}
+                      </p>
+                      <p className="text-xs text-muted-foreground mt-0.5">
+                        Destination
+                      </p>
                     </div>
                   </div>
                 </div>
@@ -336,11 +374,11 @@ export function TransferWizard({
                   <div className="space-y-2">
                     {dataTrees.map((item, i) => {
                       const scopeLabel =
-                        SCOPE_OPTIONS.find((s) => s.value === item.scope)?.label ??
-                        item.scope;
+                        SCOPE_OPTIONS.find((s) => s.value === item.scope)
+                          ?.label ?? item.scope;
                       const strategyLabel =
                         MERGE_STRATEGY_OPTIONS.find(
-                          (s) => s.value === item.mergeStrategy
+                          (s) => s.value === item.mergeStrategy,
                         )?.label ?? item.mergeStrategy;
                       return (
                         <div

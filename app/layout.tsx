@@ -20,9 +20,9 @@ const libreFranklin = Libre_Franklin({
 });
 
 export const metadata: Metadata = {
-  title: "Content Transfer | Sitecore XM Cloud",
+  title: "Content Transfer | SitecoreAI",
   description:
-    "Transfer content between Sitecore XM Cloud environments using the Marketplace SDK.",
+    "Transfer content between SitecoreAI environments using the Marketplace SDK.",
 };
 
 export default function RootLayout({

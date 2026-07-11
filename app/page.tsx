@@ -21,7 +21,7 @@ export default function Dashboard() {
                 Content Transfer
               </h1>
               <p className="text-xs text-muted-foreground mt-0.5">
-                Sitecore XM Cloud Marketplace
+                SitecoreAI Marketplace
               </p>
             </div>
           </div>
@@ -43,7 +43,7 @@ export default function Dashboard() {
         {/* Hero */}
         <div>
           <h2 className="text-xl font-semibold">
-            Move content between XM Cloud environments
+            Move content between SitecoreAI environments
           </h2>
           <p className="text-sm text-muted-foreground mt-1">
             Pick a source and destination below to get started, or start from

@@ -10,7 +10,10 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { getEnvironmentLabel, type ResourceAccessEntry } from "@/lib/content-transfer";
+import {
+  getEnvironmentLabel,
+  type ResourceAccessEntry,
+} from "@/lib/content-transfer";
 import { ArrowRight, X } from "lucide-react";
 
 interface EnvironmentSelectorProps {
@@ -30,12 +33,8 @@ export function EnvironmentSelector({
   onDestinationChange,
   disabled = false,
 }: EnvironmentSelectorProps) {
-  const sourceEnv = environments.find(
-    (e) => e.context.preview === sourceId
-  );
-  const destEnv = environments.find(
-    (e) => e.context.preview === destinationId
-  );
+  const sourceEnv = environments.find((e) => e.context.preview === sourceId);
+  const destEnv = environments.find((e) => e.context.preview === destinationId);
 
   return (
     <Card>
@@ -75,7 +74,10 @@ export function EnvironmentSelector({
               {sourceId && !disabled && (
                 <button
                   type="button"
-                  onClick={(e) => { e.stopPropagation(); onSourceChange(null); }}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onSourceChange(null);
+                  }}
                   className="absolute inset-y-0 right-8 flex items-center px-1 text-muted-foreground hover:text-foreground"
                   aria-label="Clear source environment"
                 >
@@ -129,7 +131,10 @@ export function EnvironmentSelector({
               {destinationId && !disabled && (
                 <button
                   type="button"
-                  onClick={(e) => { e.stopPropagation(); onDestinationChange(null); }}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onDestinationChange(null);
+                  }}
                   className="absolute inset-y-0 right-8 flex items-center px-1 text-muted-foreground hover:text-foreground"
                   aria-label="Clear destination environment"
                 >
@@ -145,7 +150,8 @@ export function EnvironmentSelector({
 
         {environments.length === 0 && (
           <p className="text-sm text-muted-foreground mt-3">
-            No environments available. Ensure the app is granted access to XM Cloud tenants.
+            No environments available. Ensure the app is granted access to
+            SitecoreAI environments.
           </p>
         )}
       </CardContent>

@@ -20,9 +20,8 @@ export function EnvironmentQuickLaunch() {
     return (
       <Alert variant="warning">
         <AlertDescription>
-          No environments found in application context. Ensure this app has
-          been granted access to XM Cloud tenants in the Sitecore Cloud
-          Portal.
+          No environments found in application context. Ensure this app has been
+          granted access to SitecoreAI environments when you installed it.
         </AlertDescription>
       </Alert>
     );
@@ -42,7 +41,7 @@ export function EnvironmentQuickLaunch() {
 
   const source = environments.find((e) => e.context.preview === sourceId);
   const destination = environments.find(
-    (e) => e.context.preview === destinationId
+    (e) => e.context.preview === destinationId,
   );
 
   return (
@@ -87,7 +86,13 @@ export function EnvironmentQuickLaunch() {
                   }
                   size="sm"
                 >
-                  {isSource ? "Source" : isDestination ? "Destination" : selected ? "" : "Select"}
+                  {isSource
+                    ? "Source"
+                    : isDestination
+                      ? "Destination"
+                      : selected
+                        ? ""
+                        : "Select"}
                 </Badge>
               </CardContent>
             </Card>
@@ -106,7 +111,7 @@ export function EnvironmentQuickLaunch() {
             size="sm"
             onClick={() =>
               router.push(
-                `/transfer/new?source=${encodeURIComponent(sourceId!)}&destination=${encodeURIComponent(destinationId!)}`
+                `/transfer/new?source=${encodeURIComponent(sourceId!)}&destination=${encodeURIComponent(destinationId!)}`,
               )
             }
           >
