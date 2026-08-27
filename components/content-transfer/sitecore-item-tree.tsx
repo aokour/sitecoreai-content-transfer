@@ -4,13 +4,13 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import type { SitecoreTreeNode } from "@/hooks/use-sitecore-tree";
 import type { DualTreeNode, SideFetchError } from "@/hooks/use-dual-tree";
 import { transformIconUrl } from "@/hooks/use-dual-tree";
 import { cn } from "@/lib/utils";
 import {
   AlertTriangle,
   Check,
+  ChevronDown,
   ChevronRight,
   CloudOff,
   File,
@@ -18,275 +18,6 @@ import {
   FolderOpen,
 } from "lucide-react";
 import { useEffect, useState } from "react";
-
-// ── Types ──────────────────────────────────────────────────────────────────
-
-interface SitecoreItemTreeProps {
-  /** Path to render children of (root of the visible tree) */
-  rootPath: string;
-  getChildren: (path: string) => SitecoreTreeNode[] | undefined;
-  expandNode: (path: string) => void;
-  isLoadingPath: (path: string) => boolean;
-  getError: (path: string) => string | null;
-  selectedPath: string | null;
-  onSelect: (node: SitecoreTreeNode) => void;
-  /** Paths already added to the transfer list — show a checkmark */
-  existingPaths?: string[];
-  /** Filter string — hides nodes whose names don't match */
-  filter?: string;
-}
-
-// ── Single tree row ────────────────────────────────────────────────────────
-
-interface TreeRowProps {
-  node: SitecoreTreeNode;
-  depth: number;
-  getChildren: (path: string) => SitecoreTreeNode[] | undefined;
-  expandNode: (path: string) => void;
-  isLoadingPath: (path: string) => boolean;
-  getError: (path: string) => string | null;
-  selectedPath: string | null;
-  onSelect: (node: SitecoreTreeNode) => void;
-  existingPaths: string[];
-  filter: string;
-}
-
-function TreeRow({
-  node,
-  depth,
-  getChildren,
-  expandNode,
-  isLoadingPath,
-  getError,
-  selectedPath,
-  onSelect,
-  existingPaths,
-  filter,
-}: TreeRowProps) {
-  const [isExpanded, setIsExpanded] = useState(false);
-
-  const children = getChildren(node.path);
-  const isLoading = isLoadingPath(node.path);
-  const nodeError = getError(node.path);
-  const isSelected = selectedPath === node.path;
-  const isAlreadyAdded = existingPaths.includes(node.path);
-
-  // When filter changes, auto-expand if node name matches to reveal context
-  const nameMatchesFilter =
-    filter.length > 0 &&
-    node.name.toLowerCase().includes(filter.toLowerCase());
-
-  function handleToggle(e: React.MouseEvent) {
-    e.stopPropagation();
-    if (!node.hasChildren) return;
-    const next = !isExpanded;
-    setIsExpanded(next);
-    if (next && children === undefined) {
-      expandNode(node.path);
-    }
-  }
-
-  function handleSelect() {
-    onSelect(node);
-  }
-
-  // Hide nodes that don't match an active filter
-  const hidden =
-    filter.length > 0 && !node.name.toLowerCase().includes(filter.toLowerCase());
-
-  if (hidden) return null;
-
-  // Template label — skip generic/noisy ones
-  const templateLabel =
-    node.template?.name &&
-    node.template.name !== "Node" &&
-    node.template.name !== "Folder"
-      ? node.template.name
-      : null;
-
-  return (
-    <>
-      {/* Row */}
-      <div
-        role="treeitem"
-        aria-selected={isSelected}
-        aria-expanded={node.hasChildren ? isExpanded : undefined}
-        onClick={handleSelect}
-        className={cn(
-          "group flex items-center gap-1.5 px-2 py-1.5 rounded-md cursor-pointer select-none text-sm transition-colors",
-          isSelected
-            ? "bg-primary/10 text-primary"
-            : "hover:bg-muted/60 text-foreground",
-          nameMatchesFilter && !isSelected && "bg-yellow-50 dark:bg-yellow-900/20"
-        )}
-        style={{ paddingLeft: `${8 + depth * 16}px` }}
-      >
-        {/* Expand chevron / loading */}
-        <span
-          onClick={handleToggle}
-          className={cn(
-            "shrink-0 size-4 flex items-center justify-center rounded transition-colors",
-            node.hasChildren
-              ? "hover:bg-muted text-muted-foreground hover:text-foreground cursor-pointer"
-              : "cursor-default opacity-0 pointer-events-none"
-          )}
-        >
-          {isLoading ? (
-            <Spinner className="size-3" />
-          ) : (
-            <ChevronRight
-              className={cn(
-                "size-3.5 transition-transform",
-                isExpanded && "rotate-90"
-              )}
-            />
-          )}
-        </span>
-
-        {/* Icon */}
-        <span className="shrink-0 text-muted-foreground">
-          {node.hasChildren ? (
-            isExpanded ? (
-              <FolderOpen className="size-4" />
-            ) : (
-              <Folder className="size-4" />
-            )
-          ) : (
-            <File className="size-4" />
-          )}
-        </span>
-
-        {/* Name */}
-        <span className="flex-1 truncate font-medium">{node.name}</span>
-
-        {/* Template badge */}
-        {templateLabel && (
-          <Badge colorScheme="neutral" size="sm" className="shrink-0 hidden group-hover:inline-flex">
-            {templateLabel}
-          </Badge>
-        )}
-
-        {/* Already-added indicator */}
-        {isAlreadyAdded && (
-          <span className="shrink-0 text-xs text-success-fg font-medium">
-            Added
-          </span>
-        )}
-      </div>
-
-      {/* Error */}
-      {nodeError && isExpanded && (
-        <div
-          className="text-xs text-danger-fg px-2 py-1"
-          style={{ paddingLeft: `${8 + (depth + 1) * 16}px` }}
-        >
-          {nodeError}
-        </div>
-      )}
-
-      {/* Children */}
-      {isExpanded && children && children.length > 0 && (
-        <>
-          {children.map((child) => (
-            <TreeRow
-              key={child.itemId}
-              node={child}
-              depth={depth + 1}
-              getChildren={getChildren}
-              expandNode={expandNode}
-              isLoadingPath={isLoadingPath}
-              getError={getError}
-              selectedPath={selectedPath}
-              onSelect={onSelect}
-              existingPaths={existingPaths}
-              filter={filter}
-            />
-          ))}
-        </>
-      )}
-
-      {/* Empty children */}
-      {isExpanded && children && children.length === 0 && (
-        <div
-          className="text-xs text-muted-foreground px-2 py-1 italic"
-          style={{ paddingLeft: `${8 + (depth + 1) * 16}px` }}
-        >
-          No children
-        </div>
-      )}
-    </>
-  );
-}
-
-// ── Tree root ──────────────────────────────────────────────────────────────
-
-export function SitecoreItemTree({
-  rootPath,
-  getChildren,
-  expandNode,
-  isLoadingPath,
-  getError,
-  selectedPath,
-  onSelect,
-  existingPaths = [],
-  filter = "",
-}: SitecoreItemTreeProps) {
-  // Trigger initial load for the root path
-  useEffect(() => {
-    expandNode(rootPath);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [rootPath]);
-
-  const rootChildren = getChildren(rootPath);
-  const isLoading = isLoadingPath(rootPath);
-  const rootError = getError(rootPath);
-
-  if (isLoading && !rootChildren) {
-    return (
-      <div className="flex items-center gap-2 py-8 justify-center text-muted-foreground text-sm">
-        <Spinner className="size-4" />
-        <span>Loading Sitecore tree...</span>
-      </div>
-    );
-  }
-
-  if (rootError && !rootChildren) {
-    return (
-      <div className="py-8 text-center text-sm text-danger-fg">
-        <p className="font-medium">Failed to load tree</p>
-        <p className="text-xs mt-1">{rootError}</p>
-      </div>
-    );
-  }
-
-  if (!rootChildren || rootChildren.length === 0) {
-    return (
-      <div className="py-8 text-center text-sm text-muted-foreground">
-        No items found
-      </div>
-    );
-  }
-
-  return (
-    <div role="tree" className="space-y-0.5">
-      {rootChildren.map((node) => (
-        <TreeRow
-          key={node.itemId}
-          node={node}
-          depth={0}
-          getChildren={getChildren}
-          expandNode={expandNode}
-          isLoadingPath={isLoadingPath}
-          getError={getError}
-          selectedPath={selectedPath}
-          onSelect={onSelect}
-          existingPaths={existingPaths}
-          filter={filter}
-        />
-      ))}
-    </div>
-  );
-}
 
 // ── Dual-pane tree ─────────────────────────────────────────────────────────
 // Used by the dual-pane tree picker to render source and destination sides
@@ -324,6 +55,44 @@ function ChildrenFetchErrorIndicator({
   );
 }
 
+/** A row offering to fetch the next page of children for a path. Rendered at
+ * the same height/indentation on both sides so the panes stay aligned — only
+ * the source side is an actual clickable control, mirroring the expand
+ * chevron pattern above. */
+function LoadMoreRow({
+  side,
+  depth,
+  isLoading,
+  onLoadMore,
+}: {
+  side: "source" | "destination";
+  depth: number;
+  isLoading: boolean;
+  onLoadMore: () => void;
+}) {
+  return (
+    <div
+      className="flex h-8 items-center"
+      style={{ paddingLeft: `${8 + depth * 16}px` }}
+    >
+      {side === "source" && (
+        <button
+          type="button"
+          disabled={isLoading}
+          onClick={(e) => {
+            e.stopPropagation();
+            onLoadMore();
+          }}
+          className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground disabled:opacity-50"
+        >
+          {isLoading ? <Spinner className="size-3" /> : <ChevronDown className="size-3" />}
+          Load more
+        </button>
+      )}
+    </div>
+  );
+}
+
 interface DualTreeRowProps {
   node: DualTreeNode;
   side: "source" | "destination";
@@ -332,6 +101,8 @@ interface DualTreeRowProps {
   expandNode: (path: string) => void;
   isLoadingPath: (path: string) => boolean;
   getError: (path: string, side: "source" | "destination") => SideFetchError | null;
+  hasMoreChildren: (path: string) => boolean;
+  loadMoreChildren: (path: string) => void;
   selectedPath: string | null;
   onSelect: (node: DualTreeNode) => void;
   expandedPaths: Set<string>;
@@ -348,6 +119,8 @@ function DualTreeRow({
   expandNode,
   isLoadingPath,
   getError,
+  hasMoreChildren,
+  loadMoreChildren,
   selectedPath,
   onSelect,
   expandedPaths,
@@ -560,6 +333,8 @@ function DualTreeRow({
               expandNode={expandNode}
               isLoadingPath={isLoadingPath}
               getError={getError}
+              hasMoreChildren={hasMoreChildren}
+              loadMoreChildren={loadMoreChildren}
               selectedPath={selectedPath}
               onSelect={onSelect}
               expandedPaths={expandedPaths}
@@ -579,6 +354,15 @@ function DualTreeRow({
           No children
         </div>
       )}
+
+      {nodeError?.kind !== "hard" && isExpanded && children && hasMoreChildren(node.path) && (
+        <LoadMoreRow
+          side={side}
+          depth={depth + 1}
+          isLoading={isLoading}
+          onLoadMore={() => loadMoreChildren(node.path)}
+        />
+      )}
     </>
   );
 }
@@ -592,6 +376,8 @@ export interface DualTreePaneProps {
   expandNode: (path: string) => void;
   isLoadingPath: (path: string) => boolean;
   getError: (path: string, side: "source" | "destination") => SideFetchError | null;
+  hasMoreChildren: (path: string) => boolean;
+  loadMoreChildren: (path: string) => void;
   selectedPath: string | null;
   onSelect: (node: DualTreeNode) => void;
   /** Shared expansion state owned by the parent */
@@ -610,6 +396,8 @@ export function DualTreePane({
   expandNode,
   isLoadingPath,
   getError,
+  hasMoreChildren,
+  loadMoreChildren,
   selectedPath,
   onSelect,
   expandedPaths,
@@ -673,6 +461,14 @@ export function DualTreePane({
         <div className="py-8 text-center text-sm text-muted-foreground">
           No items found
         </div>
+        {hasMoreChildren(rootPath) && (
+          <LoadMoreRow
+            side={side}
+            depth={0}
+            isLoading={isLoading}
+            onLoadMore={() => loadMoreChildren(rootPath)}
+          />
+        )}
       </div>
     );
   }
@@ -697,6 +493,8 @@ export function DualTreePane({
           expandNode={expandNode}
           isLoadingPath={isLoadingPath}
           getError={getError}
+          hasMoreChildren={hasMoreChildren}
+          loadMoreChildren={loadMoreChildren}
           selectedPath={selectedPath}
           onSelect={onSelect}
           expandedPaths={expandedPaths}
@@ -705,6 +503,14 @@ export function DualTreePane({
           onAdd={onAdd}
         />
       ))}
+      {hasMoreChildren(rootPath) && (
+        <LoadMoreRow
+          side={side}
+          depth={0}
+          isLoading={isLoading}
+          onLoadMore={() => loadMoreChildren(rootPath)}
+        />
+      )}
     </div>
   );
 }
