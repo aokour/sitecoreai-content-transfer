@@ -69,7 +69,14 @@ export function InlineItemSelector({
   const [modalScope, setModalScope] = useState<TransferScope>(DEFAULT_SCOPE);
   const [modalStrategy, setModalStrategy] = useState<MergeStrategy>(DEFAULT_STRATEGY);
 
-  const { getDualChildren, expandNode, isLoadingPath, getError } = useDualTree(
+  const {
+    getDualChildren,
+    expandNode,
+    isLoadingPath,
+    getError,
+    hasMoreChildren,
+    loadMoreChildren,
+  } = useDualTree(
     sourceContextId,
     destinationContextId
   );
@@ -176,6 +183,8 @@ export function InlineItemSelector({
                 expandNode={expandNode}
                 isLoadingPath={isLoadingPath}
                 getError={getError}
+                hasMoreChildren={hasMoreChildren}
+                loadMoreChildren={loadMoreChildren}
                 selectedPath={focusedNode?.path ?? null}
                 onSelect={handleNodeSelect}
                 expandedPaths={expandedPaths}
@@ -193,6 +202,8 @@ export function InlineItemSelector({
                   expandNode={expandNode}
                   isLoadingPath={isLoadingPath}
                   getError={getError}
+                  hasMoreChildren={hasMoreChildren}
+                  loadMoreChildren={loadMoreChildren}
                   selectedPath={focusedNode?.path ?? null}
                   onSelect={handleNodeSelect}
                   expandedPaths={expandedPaths}

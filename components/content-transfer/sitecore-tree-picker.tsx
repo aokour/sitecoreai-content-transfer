@@ -46,7 +46,14 @@ export function SitecoreTreePicker({
   // Shared expansion state — both panes stay in sync
   const [expandedPaths, setExpandedPaths] = useState<Set<string>>(new Set());
 
-  const { getDualChildren, expandNode, isLoadingPath, getError } = useDualTree(
+  const {
+    getDualChildren,
+    expandNode,
+    isLoadingPath,
+    getError,
+    hasMoreChildren,
+    loadMoreChildren,
+  } = useDualTree(
     sourceContextId,
     destinationContextId
   );
@@ -153,6 +160,8 @@ export function SitecoreTreePicker({
                     expandNode={expandNode}
                     isLoadingPath={isLoadingPath}
                     getError={getError}
+                    hasMoreChildren={hasMoreChildren}
+                    loadMoreChildren={loadMoreChildren}
                     selectedPath={pendingNode?.path ?? null}
                     onSelect={handleNodeSelect}
                     expandedPaths={expandedPaths}
@@ -170,6 +179,8 @@ export function SitecoreTreePicker({
                       expandNode={expandNode}
                       isLoadingPath={isLoadingPath}
                       getError={getError}
+                      hasMoreChildren={hasMoreChildren}
+                      loadMoreChildren={loadMoreChildren}
                       selectedPath={pendingNode?.path ?? null}
                       onSelect={handleNodeSelect}
                       expandedPaths={expandedPaths}

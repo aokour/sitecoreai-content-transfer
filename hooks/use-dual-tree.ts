@@ -56,6 +56,7 @@ interface GraphQLEnvelope {
     item?: {
       children?: {
         nodes: (RawTreeNode | null)[];
+        pageInfo?: { endCursor: string | null; hasNextPage: boolean };
       };
     };
   };
@@ -75,13 +76,34 @@ export interface SideFetchError {
 
 type PathErrorState = Partial<Record<Side, SideFetchError>>;
 
+/** Per-side pagination bookkeeping for one tree path — not rendered directly,
+ * so it lives in a ref rather than state (see `paginationRef`). */
+interface SidePageState {
+  cursor: string | null;
+  hasMore: boolean;
+  rawNodes: RawTreeNode[];
+}
+
+function freshSideState(): SidePageState {
+  return { cursor: null, hasMore: false, rawNodes: [] };
+}
+
 // ── GraphQL query ──────────────────────────────────────────────────────────
 // Fetches children plus the __Updated standard field for diff comparison.
+// Paginated: `first`'s GraphQL type is the custom scalar `PaginationAmount`
+// (not `Int`) — confirmed via schema introspection. A variable declared as
+// `Int` fails validation against it, so this must stay `PaginationAmount`.
+
+const PAGE_SIZE = 1000;
 
 const GET_CHILDREN_WITH_META = /* GraphQL */ `
-  query GetSitecoreItemsDual($path: String!, $systemLocale: String!) {
+  query GetSitecoreItemsDual($path: String!, $systemLocale: String!, $first: PaginationAmount!, $after: String) {
     item(where: { database: "master", path: $path, language: $systemLocale }) {
-      children {
+      children(first: $first, after: $after) {
+        pageInfo {
+          endCursor
+          hasNextPage
+        }
         nodes {
           itemId
           name
@@ -247,8 +269,13 @@ async function fetchSideNodes(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   client: any,
   contextId: string,
-  variables: { path: string; systemLocale: string },
-): Promise<{ nodes: RawTreeNode[]; partialError: SideFetchError | null }> {
+  variables: { path: string; systemLocale: string; first: number; after: string | null },
+): Promise<{
+  nodes: RawTreeNode[];
+  partialError: SideFetchError | null;
+  endCursor: string | null;
+  hasMore: boolean;
+}> {
   const res = await client.mutate("xmc.authoring.graphql", {
     params: {
       body: { query: GET_CHILDREN_WITH_META, variables },
@@ -263,11 +290,14 @@ async function fetchSideNodes(
 
   const envelope = resAny.data as GraphQLEnvelope;
   const rawNodes = envelope.data?.item?.children?.nodes ?? [];
+  const pageInfo = envelope.data?.item?.children?.pageInfo;
+  const endCursor = pageInfo?.endCursor ?? null;
+  const hasMore = pageInfo?.hasNextPage ?? false;
   const errors = envelope.errors ?? [];
   const filtered = rawNodes.filter((n): n is RawTreeNode => n !== null);
 
   if (errors.length === 0) {
-    return { nodes: filtered, partialError: null };
+    return { nodes: filtered, partialError: null, endCursor, hasMore };
   }
 
   const badIndices = extractBadIndices(errors);
@@ -278,6 +308,8 @@ async function fetchSideNodes(
         kind: "partial",
         message: summarizePartialErrors(errors, badIndices.length),
       },
+      endCursor,
+      hasMore,
     };
   }
 
@@ -305,6 +337,10 @@ export function useDualTree(
   const [errorMap, setErrorMap] = useState<Map<string, PathErrorState>>(
     new Map(),
   );
+  // Map<path, true if either side has more pages to load>
+  const [hasMoreMap, setHasMoreMap] = useState<Map<string, boolean>>(
+    new Map(),
+  );
 
   const childrenMapRef = useRef(childrenMap);
   childrenMapRef.current = childrenMap;
@@ -312,19 +348,39 @@ export function useDualTree(
   errorMapRef.current = errorMap;
   const loadingPathsRef = useRef(loadingPaths);
   loadingPathsRef.current = loadingPaths;
+  // Per-path, per-side pagination bookkeeping (cursor/hasMore/accumulated raw
+  // nodes) — internal to fetching, never rendered directly, so a ref rather
+  // than state.
+  const paginationRef = useRef(
+    new Map<string, { source: SidePageState; destination: SidePageState }>(),
+  );
 
   const fetchChildren = useCallback(
-    async (path: string) => {
+    async (path: string, opts?: { loadMore?: boolean }) => {
       if (!sourceContextId) return;
       if (loadingPathsRef.current.has(path)) return;
 
+      const loadMore = opts?.loadMore ?? false;
       const priorErrors = errorMapRef.current.get(path);
       const hadChildrenBefore = childrenMapRef.current.has(path);
-      // Any existing error (not just "hard") makes this path eligible for a
-      // manual retry — a "partial" item error may have been a transient/fixed
-      // server-side issue, so there's no reason to lock it out forever.
-      const needsRetry = !!(priorErrors?.source || priorErrors?.destination);
-      if (hadChildrenBefore && !needsRetry) return;
+
+      if (!loadMore) {
+        // Any existing error (not just "hard") makes this path eligible for a
+        // manual retry — a "partial" item error may have been a transient/fixed
+        // server-side issue, so there's no reason to lock it out forever.
+        const needsRetry = !!(priorErrors?.source || priorErrors?.destination);
+        if (hadChildrenBefore && !needsRetry) return;
+        // Fresh load (or full retry) — reset pagination bookkeeping for this path.
+        paginationRef.current.set(path, {
+          source: freshSideState(),
+          destination: freshSideState(),
+        });
+      }
+
+      const pageState =
+        paginationRef.current.get(path) ??
+        { source: freshSideState(), destination: freshSideState() };
+      paginationRef.current.set(path, pageState);
 
       setLoadingPaths((prev) => new Set(prev).add(path));
       setErrorMap((prev) => {
@@ -334,44 +390,72 @@ export function useDualTree(
       });
 
       try {
-        const variables = { path, systemLocale: "en" };
+        const fetchSide = (contextId: string, side: Side) =>
+          fetchSideNodes(client, contextId, {
+            path,
+            systemLocale: "en",
+            first: PAGE_SIZE,
+            after: pageState[side].cursor,
+          });
+
+        // On a loadMore call, skip a side entirely once it has no more pages —
+        // same reasoning as skipping the destination fetch when there's no
+        // destination context at all.
+        const shouldFetchSource = !loadMore || pageState.source.hasMore;
+        const shouldFetchDestination =
+          !!destinationContextId && (!loadMore || pageState.destination.hasMore);
 
         // Fetch both environments independently — a hard failure on one side
         // must not prevent the other side's data from rendering.
         const [srcOutcome, dstOutcome] = await Promise.allSettled([
-          fetchSideNodes(client, sourceContextId, variables),
-          destinationContextId
-            ? fetchSideNodes(client, destinationContextId, variables)
+          shouldFetchSource
+            ? fetchSide(sourceContextId, "source")
+            : Promise.resolve(null),
+          shouldFetchDestination
+            ? fetchSide(destinationContextId as string, "destination")
             : Promise.resolve(null),
         ]);
 
         const pathErrors: PathErrorState = {};
-        let srcNodes: RawTreeNode[] = [];
-        let dstNodes: RawTreeNode[] = [];
 
-        if (srcOutcome.status === "fulfilled") {
-          srcNodes = srcOutcome.value.nodes;
-          if (srcOutcome.value.partialError) {
-            pathErrors.source = srcOutcome.value.partialError;
+        if (shouldFetchSource) {
+          if (srcOutcome.status === "fulfilled" && srcOutcome.value) {
+            pageState.source.rawNodes = pageState.source.rawNodes.concat(
+              srcOutcome.value.nodes,
+            );
+            pageState.source.cursor = srcOutcome.value.endCursor;
+            pageState.source.hasMore = srcOutcome.value.hasMore;
+            if (srcOutcome.value.partialError) {
+              pathErrors.source = srcOutcome.value.partialError;
+            }
+          } else if (srcOutcome.status === "rejected") {
+            // On the very first page, a hard failure means "we have nothing
+            // reliable." On a loadMore page, we already have prior pages —
+            // don't discard them or advance the cursor, so the same "Load
+            // more" click naturally retries; report it as "partial" since
+            // "hard" suppresses children rendering entirely in the UI.
+            pathErrors.source = {
+              kind: loadMore ? "partial" : "hard",
+              message: extractErrorMessage(srcOutcome.reason),
+            };
           }
-        } else {
-          pathErrors.source = {
-            kind: "hard",
-            message: extractErrorMessage(srcOutcome.reason),
-          };
         }
 
-        // Only evaluate the destination outcome when a destination was
-        // actually requested — otherwise it's "not attempted," not "failed."
-        if (destinationContextId) {
+        // Only evaluate the destination outcome when a destination fetch was
+        // actually attempted — otherwise it's "not attempted," not "failed."
+        if (shouldFetchDestination) {
           if (dstOutcome.status === "fulfilled" && dstOutcome.value) {
-            dstNodes = dstOutcome.value.nodes;
+            pageState.destination.rawNodes = pageState.destination.rawNodes.concat(
+              dstOutcome.value.nodes,
+            );
+            pageState.destination.cursor = dstOutcome.value.endCursor;
+            pageState.destination.hasMore = dstOutcome.value.hasMore;
             if (dstOutcome.value.partialError) {
               pathErrors.destination = dstOutcome.value.partialError;
             }
           } else if (dstOutcome.status === "rejected") {
             pathErrors.destination = {
-              kind: "hard",
+              kind: loadMore ? "partial" : "hard",
               message: extractErrorMessage(dstOutcome.reason),
             };
           }
@@ -390,7 +474,10 @@ export function useDualTree(
           pathErrors.destination?.kind === "hard";
 
         if (!sourceRegressed && !destRegressed) {
-          const merged = mergeNodes(srcNodes, dstNodes);
+          const merged = mergeNodes(
+            pageState.source.rawNodes,
+            pageState.destination.rawNodes,
+          );
           setChildrenMap((prev) => {
             const next = new Map(prev);
             next.set(path, merged);
@@ -405,6 +492,12 @@ export function useDualTree(
           } else {
             next.delete(path);
           }
+          return next;
+        });
+
+        setHasMoreMap((prev) => {
+          const next = new Map(prev);
+          next.set(path, pageState.source.hasMore || pageState.destination.hasMore);
           return next;
         });
       } catch (err) {
@@ -459,5 +552,24 @@ export function useDualTree(
     [errorMap],
   );
 
-  return { getDualChildren, expandNode, isLoadingPath, getError };
+  const hasMoreChildren = useCallback(
+    (path: string) => hasMoreMap.get(path) ?? false,
+    [hasMoreMap],
+  );
+
+  const loadMoreChildren = useCallback(
+    (path: string) => {
+      fetchChildren(path, { loadMore: true });
+    },
+    [fetchChildren],
+  );
+
+  return {
+    getDualChildren,
+    expandNode,
+    isLoadingPath,
+    getError,
+    hasMoreChildren,
+    loadMoreChildren,
+  };
 }
