@@ -13,7 +13,7 @@ export interface DualTreeNode {
   /** true if EITHER side reports children */
   hasChildren: boolean;
   template?: { name: string };
-  /** Icon URL from Sitecore — use transformIconUrl() before rendering */
+  /** Icon URL from Sitecore — resolve via useSitecoreIcon() before rendering */
   icon?: string;
   existsInSource: boolean;
   existsInDestination: boolean;
@@ -127,17 +127,6 @@ const GET_CHILDREN_WITH_META = /* GraphQL */ `
     }
   }
 `;
-
-// ── Icon URL transform ─────────────────────────────────────────────────────
-// Sitecore's GraphQL returns /-/icon/ URLs which are redirect aliases;
-// the actual browser-accessible path uses /temp/iconcache/.
-
-export function transformIconUrl(url: string): string {
-  return url
-    .replace("/-/icon/", "/temp/iconcache/")
-    .replace("/32x32/", "/16x16/")
-    .toLowerCase();
-}
 
 // ── Error helpers ────────────────────────────────────────────────────────────
 

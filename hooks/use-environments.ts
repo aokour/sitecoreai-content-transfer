@@ -4,7 +4,7 @@ import { useAppContext } from "@/components/providers/marketplace";
 import type { ResourceAccessEntry } from "@/lib/content-transfer";
 import { useMemo } from "react";
 
-/** Returns the XM Cloud environments this app has been granted access to. */
+/** Returns the SitecoreAI environments this app has been granted access to. */
 export function useEnvironments(): ResourceAccessEntry[] {
   const appContext = useAppContext();
 

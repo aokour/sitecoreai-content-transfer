@@ -1,7 +1,6 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono, Libre_Franklin } from "next/font/google";
 import "./globals.css";
-import { MarketplaceProvider } from "@/components/providers/marketplace";
 import { AeLogoCorner } from "@/components/AeLogoIntro";
 
 const geistSans = Geist({
@@ -35,7 +34,7 @@ export default function RootLayout({
       <body
         className={`${geistSans.variable} ${geistMono.variable} ${libreFranklin.variable} antialiased`}
       >
-        <MarketplaceProvider>{children}</MarketplaceProvider>
+        {children}
         <AeLogoCorner />
       </body>
     </html>

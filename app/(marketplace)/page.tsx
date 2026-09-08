@@ -3,7 +3,8 @@
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { EnvironmentQuickLaunch } from "@/components/content-transfer/environment-quick-launch";
-import { ArrowRight, Plus } from "lucide-react";
+import { AppBrand } from "@/components/app-brand";
+import { Plus } from "lucide-react";
 import Link from "next/link";
 
 export default function Dashboard() {
@@ -12,19 +13,7 @@ export default function Dashboard() {
       {/* Top bar */}
       <div className="border-b bg-card">
         <div className="container mx-auto px-6 py-4 flex items-center justify-between max-w-7xl">
-          <div className="flex items-center gap-3">
-            <div className="size-8 rounded-md bg-primary flex items-center justify-center">
-              <ArrowRight className="size-4 text-primary-foreground" />
-            </div>
-            <div>
-              <h1 className="text-lg font-semibold leading-none">
-                Content Transfer
-              </h1>
-              <p className="text-xs text-muted-foreground mt-0.5">
-                SitecoreAI Marketplace
-              </p>
-            </div>
-          </div>
+          <AppBrand />
           <div className="flex items-center gap-3">
             <Button size="sm" asChild>
               <Link href="/transfer/new">

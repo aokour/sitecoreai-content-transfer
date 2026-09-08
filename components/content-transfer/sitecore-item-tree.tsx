@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import type { DualTreeNode, SideFetchError } from "@/hooks/use-dual-tree";
-import { transformIconUrl } from "@/hooks/use-dual-tree";
+import { useSitecoreIcon } from "@/lib/sitecore-icon";
 import { cn } from "@/lib/utils";
 import {
   AlertTriangle,
@@ -17,7 +17,7 @@ import {
   Folder,
   FolderOpen,
 } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect } from "react";
 
 // ── Dual-pane tree ─────────────────────────────────────────────────────────
 // Used by the dual-pane tree picker to render source and destination sides
@@ -129,7 +129,7 @@ function DualTreeRow({
   onAdd,
 }: DualTreeRowProps) {
   const isExpanded = expandedPaths.has(node.path);
-  const [iconError, setIconError] = useState(false);
+  const icon = useSitecoreIcon(node.icon);
   const children = getDualChildren(node.path);
   const isLoading = isLoadingPath(node.path);
   const nodeError = getError(node.path, side);
@@ -248,14 +248,14 @@ function DualTreeRow({
         <span className={cn("shrink-0", isGhost ? "text-muted-foreground/50" : "text-muted-foreground")}>
           {isGhost ? (
             <CloudOff className="size-4" />
-          ) : node.icon && !iconError ? (
+          ) : icon.src ? (
             <img
-              src={transformIconUrl(node.icon)}
+              src={icon.src}
               width={16}
               height={16}
               alt=""
               className="size-4 object-contain"
-              onError={() => setIconError(true)}
+              onError={icon.onError}
             />
           ) : node.hasChildren ? (
             isExpanded ? (
