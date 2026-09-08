@@ -21,9 +21,6 @@ export default function Dashboard() {
                 New Transfer
               </Link>
             </Button>
-            <Badge colorScheme="primary" size="sm">
-              Standalone
-            </Badge>
           </div>
         </div>
       </div>
