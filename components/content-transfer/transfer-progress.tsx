@@ -16,8 +16,22 @@ import type { ChunkSetMetadata, TransferPhase } from "@/lib/content-transfer";
 import {
   TRANSFER_PHASE_LABELS,
   getPhaseColorScheme,
+  isActivePhase,
 } from "@/lib/content-transfer";
 import { CheckCircle2, XCircle } from "lucide-react";
+
+export interface ProgressStep {
+  key: TransferPhase;
+  label: string;
+}
+
+/** The phases a source → destination transfer moves through, in order. */
+const TRANSFER_STEPS: ProgressStep[] = [
+  { key: "creating", label: "Create" },
+  { key: "preparing", label: "Package" },
+  { key: "transferring", label: "Transfer" },
+  { key: "importing", label: "Import" },
+];
 
 interface TransferProgressProps {
   phase: TransferPhase;
@@ -25,6 +39,11 @@ interface TransferProgressProps {
   error: string | null;
   chunkSetsMetadata: ChunkSetMetadata[];
   transferId: string | null;
+  /** Overrides the step breakdown so backup and restore can show their own
+   *  phases. Defaults to the transfer sequence. */
+  steps?: ProgressStep[];
+  /** Extra detail rendered under the status header, e.g. the current chunk. */
+  detail?: string | null;
 }
 
 export function TransferProgressDisplay({
@@ -33,12 +52,10 @@ export function TransferProgressDisplay({
   error,
   chunkSetsMetadata,
   transferId,
+  steps = TRANSFER_STEPS,
+  detail,
 }: TransferProgressProps) {
-  const isActive =
-    phase === "creating" ||
-    phase === "preparing" ||
-    phase === "transferring" ||
-    phase === "importing";
+  const isActive = isActivePhase(phase);
 
   return (
     <div className="space-y-6">
@@ -58,6 +75,9 @@ export function TransferProgressDisplay({
               {phase}
             </Badge>
           </div>
+          {detail && (
+            <p className="text-xs text-muted-foreground">{detail}</p>
+          )}
           {transferId && (
             <p className="text-xs text-muted-foreground font-mono">
               ID: {transferId}
@@ -78,20 +98,17 @@ export function TransferProgressDisplay({
       )}
 
       {/* Phase steps breakdown */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-        {(
-          [
-            { key: "creating", label: "Create" },
-            { key: "preparing", label: "Package" },
-            { key: "transferring", label: "Transfer" },
-            { key: "importing", label: "Import" },
-          ] as { key: TransferPhase; label: string }[]
-        ).map((step) => {
+      <div
+        className="grid grid-cols-2 gap-3"
+        style={{
+          gridTemplateColumns: `repeat(${Math.min(steps.length, 4)}, minmax(0, 1fr))`,
+        }}
+      >
+        {steps.map((step) => {
+          // Terminal phases sit past every step, so a completed or failed run
+          // resolves each box against the sequence it actually ran.
           const phases: TransferPhase[] = [
-            "creating",
-            "preparing",
-            "transferring",
-            "importing",
+            ...steps.map((s) => s.key),
             "completed",
             "failed",
           ];
