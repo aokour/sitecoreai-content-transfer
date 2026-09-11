@@ -50,6 +50,9 @@ interface InlineItemSelectorProps {
   destinationEnvName?: string;
   label: string;
   onLabelChange: (label: string) => void;
+  /** Controls presentation copy and whether the destination comparison pane
+   *  is rendered. Defaults to the existing transfer experience. */
+  mode?: "transfer" | "backup";
 }
 
 export function InlineItemSelector({
@@ -61,6 +64,7 @@ export function InlineItemSelector({
   destinationEnvName,
   label,
   onLabelChange,
+  mode = "transfer",
 }: InlineItemSelectorProps) {
   const [expandedPaths, setExpandedPaths] = useState<Set<string>>(new Set());
   const [focusedNode, setFocusedNode] = useState<DualTreeNode | null>(null);
@@ -124,6 +128,9 @@ export function InlineItemSelector({
 
   const existingPaths = items.map((i) => i.itemPath).filter(Boolean);
   const overlaps = findOverlaps(items);
+  const isBackup = mode === "backup";
+  const addActionLabel = isBackup ? "Add to Backup" : "Add to Transfer";
+  const addedLabel = isBackup ? "Added to backup" : "Added to transfer";
 
   return (
     <div className="space-y-0">
@@ -131,24 +138,33 @@ export function InlineItemSelector({
       <div className="flex flex-wrap items-center gap-x-6 gap-y-1 px-1 py-2 text-xs text-muted-foreground">
         <span className="flex items-center gap-1.5">
           <span className="inline-block size-2.5 rounded-sm bg-primary/20 border border-primary/40" />
-          Focused (previewing)
+          {isBackup ? "Focused item" : "Focused (previewing)"}
         </span>
         <span className="flex items-center gap-1.5">
           <Check className="size-3.5 text-primary" />
-          Added to transfer
+          {addedLabel}
         </span>
-        <span className="flex items-center gap-1.5">
-          <CloudOff className="size-3.5 opacity-50" />
-          <span className="italic opacity-60">Not in this environment</span>
-        </span>
-        <span className="flex items-center gap-1.5">
-          <span className="inline-block size-2 rounded-full bg-amber-400 dark:bg-amber-500" />
-          Modified (revision differs)
-        </span>
+        {!isBackup && (
+          <>
+            <span className="flex items-center gap-1.5">
+              <CloudOff className="size-3.5 opacity-50" />
+              <span className="italic opacity-60">Not in this environment</span>
+            </span>
+            <span className="flex items-center gap-1.5">
+              <span className="inline-block size-2 rounded-full bg-amber-400 dark:bg-amber-500" />
+              Modified (revision differs)
+            </span>
+          </>
+        )}
       </div>
 
       {/* Column headers */}
-      <div className="grid grid-cols-2 divide-x border rounded-t-lg overflow-hidden">
+      <div
+        className={cn(
+          "grid border rounded-t-lg overflow-hidden",
+          isBackup ? "grid-cols-1" : "grid-cols-2 divide-x",
+        )}
+      >
         <div className="px-4 py-2.5 bg-muted/30">
           <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
             Source
@@ -159,22 +175,29 @@ export function InlineItemSelector({
             </p>
           )}
         </div>
-        <div className="px-4 py-2.5 bg-muted/30">
-          <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-            Destination
-          </p>
-          {destinationEnvName && (
-            <p className="text-xs font-medium text-foreground mt-0.5 truncate">
-              {destinationEnvName}
+        {!isBackup && (
+          <div className="px-4 py-2.5 bg-muted/30">
+            <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+              Destination
             </p>
-          )}
-        </div>
+            {destinationEnvName && (
+              <p className="text-xs font-medium text-foreground mt-0.5 truncate">
+                {destinationEnvName}
+              </p>
+            )}
+          </div>
+        )}
       </div>
 
       {/* Dual-pane tree */}
       {sourceContextId ? (
         <ScrollArea className="h-[480px] border border-t-0 rounded-b-lg">
-          <div className="grid grid-cols-2 divide-x">
+          <div
+            className={cn(
+              "grid",
+              isBackup ? "grid-cols-1" : "grid-cols-2 divide-x",
+            )}
+          >
             <div className="px-3 py-2 min-w-0">
               <DualTreePane
                 side="source"
@@ -191,30 +214,34 @@ export function InlineItemSelector({
                 onToggleExpand={handleToggleExpand}
                 existingPaths={existingPaths}
                 onAdd={handleRequestAdd}
+                addActionLabel={addActionLabel}
+                addedLabel={addedLabel}
               />
             </div>
-            <div className="px-3 py-2 min-w-0">
-              {destinationContextId ? (
-                <DualTreePane
-                  side="destination"
-                  rootPath={TREE_ROOT}
-                  getDualChildren={getDualChildren}
-                  expandNode={expandNode}
-                  isLoadingPath={isLoadingPath}
-                  getError={getError}
-                  hasMoreChildren={hasMoreChildren}
-                  loadMoreChildren={loadMoreChildren}
-                  selectedPath={focusedNode?.path ?? null}
-                  onSelect={handleNodeSelect}
-                  expandedPaths={expandedPaths}
-                  onToggleExpand={handleToggleExpand}
-                />
-              ) : (
-                <div className="py-12 text-center text-sm text-muted-foreground">
-                  Select a destination environment to see the comparison.
-                </div>
-              )}
-            </div>
+            {!isBackup && (
+              <div className="px-3 py-2 min-w-0">
+                {destinationContextId ? (
+                  <DualTreePane
+                    side="destination"
+                    rootPath={TREE_ROOT}
+                    getDualChildren={getDualChildren}
+                    expandNode={expandNode}
+                    isLoadingPath={isLoadingPath}
+                    getError={getError}
+                    hasMoreChildren={hasMoreChildren}
+                    loadMoreChildren={loadMoreChildren}
+                    selectedPath={focusedNode?.path ?? null}
+                    onSelect={handleNodeSelect}
+                    expandedPaths={expandedPaths}
+                    onToggleExpand={handleToggleExpand}
+                  />
+                ) : (
+                  <div className="py-12 text-center text-sm text-muted-foreground">
+                    Select a destination environment to see the comparison.
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         </ScrollArea>
       ) : (
@@ -224,7 +251,10 @@ export function InlineItemSelector({
       )}
 
       {/* Collapsible field comparison — shown when a source node is focused */}
-      {focusedNode && focusedNode.existsInSource && sourceContextId && (
+      {!isBackup &&
+        focusedNode &&
+        focusedNode.existsInSource &&
+        sourceContextId && (
           <div className="mt-3 space-y-2">
             {/* Collapsible field comparison */}
             <div className="border rounded-lg overflow-hidden">
@@ -268,14 +298,16 @@ export function InlineItemSelector({
               )}
             </div>
           </div>
-      )}
+        )}
 
       <Separator className="my-6" />
 
       {/* Selected items list */}
       <div className="space-y-3">
         <div className="flex items-center gap-2">
-          <h3 className="text-sm font-medium">Selected Items</h3>
+          <h3 className="text-sm font-medium">
+            {isBackup ? "Items to Back Up" : "Selected Items"}
+          </h3>
           {items.length > 0 && (
             <Badge colorScheme="primary" size="sm">
               {items.length}
@@ -287,14 +319,22 @@ export function InlineItemSelector({
           <Alert variant="warning">
             <AlertTriangle className="size-4" />
             <AlertDescription>
-              {overlaps.size === 1 ? "1 selected item is" : `${overlaps.size} selected items are`} already covered by an ancestor with <strong>Item &amp; Descendants</strong> scope and will be transferred redundantly.
+              {overlaps.size === 1
+                ? "1 selected item is"
+                : `${overlaps.size} selected items are`}{" "}
+              already covered by an ancestor with{" "}
+              <strong>Item &amp; Descendants</strong> scope and will be{" "}
+              {isBackup
+                ? "included redundantly in the backup."
+                : "transferred redundantly."}
             </AlertDescription>
           </Alert>
         )}
 
         {items.length === 0 ? (
           <p className="text-sm text-muted-foreground py-3 text-center border rounded-lg border-dashed">
-            Click a source item in the tree above to add it to the transfer.
+            Click a source item in the tree above to add it to the{" "}
+            {isBackup ? "backup" : "transfer"}.
           </p>
         ) : (
           <>
@@ -404,26 +444,34 @@ export function InlineItemSelector({
         )}
       </div>
 
-      {/* Transfer label */}
+      {/* Operation label */}
       <div className="space-y-2 pt-4">
-        <Label htmlFor="transfer-label">Transfer Label (optional)</Label>
+        <Label htmlFor="operation-label">
+          {isBackup ? "Backup Label (optional)" : "Transfer Label (optional)"}
+        </Label>
         <Input
-          id="transfer-label"
-          placeholder="e.g. Homepage content migration"
+          id="operation-label"
+          placeholder={
+            isBackup
+              ? "e.g. Homepage content backup"
+              : "e.g. Homepage content migration"
+          }
           value={label}
           onChange={(e) => onLabelChange(e.target.value)}
           maxLength={100}
         />
         <p className="text-xs text-muted-foreground">
-          A human-readable name to identify this transfer in the history.
+          {isBackup
+            ? "A human-readable name used to identify the downloaded archive."
+            : "A human-readable name to identify this transfer in the history."}
         </p>
       </div>
 
-      {/* Add to Transfer modal */}
+      {/* Add-item modal */}
       <Dialog open={!!addModalNode} onOpenChange={(open) => !open && setAddModalNode(null)}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Add to Transfer</DialogTitle>
+            <DialogTitle>{addActionLabel}</DialogTitle>
             {addModalNode && (
               <code className="font-mono text-xs text-muted-foreground break-all">
                 {addModalNode.path}
@@ -494,7 +542,7 @@ export function InlineItemSelector({
             </Button>
             <Button onClick={handleConfirmAdd}>
               <Check className="size-4 mr-1.5" />
-              Add to Transfer
+              {addActionLabel}
             </Button>
           </DialogFooter>
         </DialogContent>

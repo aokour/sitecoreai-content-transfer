@@ -109,6 +109,8 @@ interface DualTreeRowProps {
   onToggleExpand: (path: string) => void;
   existingPaths?: string[];
   onAdd?: (node: DualTreeNode) => void;
+  addActionLabel: string;
+  addedLabel: string;
 }
 
 function DualTreeRow({
@@ -127,6 +129,8 @@ function DualTreeRow({
   onToggleExpand,
   existingPaths = [],
   onAdd,
+  addActionLabel,
+  addedLabel,
 }: DualTreeRowProps) {
   const isExpanded = expandedPaths.has(node.path);
   const icon = useSitecoreIcon(node.icon);
@@ -275,10 +279,13 @@ function DualTreeRow({
 
         {/* Already-added indicator (source side only) */}
         {isAlreadyAdded && (
-          <Check className="shrink-0 size-3.5 text-primary" aria-label="Added to transfer" />
+          <Check
+            className="shrink-0 size-3.5 text-primary"
+            aria-label={addedLabel}
+          />
         )}
 
-        {/* Add to transfer — revealed on hover, source side only. Always laid out
+        {/* Add action — revealed on hover, source side only. Always laid out
             (opacity-toggled, not hidden/inline-flex-toggled) so appearing on
             hover doesn't reflow/shift the row. */}
         {onAdd && side === "source" && !isGhost && !isAlreadyAdded && (
@@ -288,7 +295,7 @@ function DualTreeRow({
             className="shrink-0 inline-flex h-6 px-2 text-xs opacity-0 pointer-events-none transition-opacity group-hover:opacity-100 group-hover:pointer-events-auto"
             onClick={handleAdd}
           >
-            Add to Transfer
+            {addActionLabel}
           </Button>
         )}
 
@@ -341,6 +348,8 @@ function DualTreeRow({
               onToggleExpand={onToggleExpand}
               existingPaths={existingPaths}
               onAdd={onAdd}
+              addActionLabel={addActionLabel}
+              addedLabel={addedLabel}
             />
           ))}
         </>
@@ -387,6 +396,10 @@ export interface DualTreePaneProps {
   existingPaths?: string[];
   /** Called when the hover "Add to Transfer" button is clicked on a source row */
   onAdd?: (node: DualTreeNode) => void;
+  /** Context-specific text for the source-row add action. */
+  addActionLabel?: string;
+  /** Accessible label for a source row that has already been added. */
+  addedLabel?: string;
 }
 
 export function DualTreePane({
@@ -404,6 +417,8 @@ export function DualTreePane({
   onToggleExpand,
   existingPaths = [],
   onAdd,
+  addActionLabel = "Add to Transfer",
+  addedLabel = "Added to transfer",
 }: DualTreePaneProps) {
   // Trigger initial load of the root on mount
   useEffect(() => {
@@ -501,6 +516,8 @@ export function DualTreePane({
           onToggleExpand={onToggleExpand}
           existingPaths={existingPaths}
           onAdd={onAdd}
+          addActionLabel={addActionLabel}
+          addedLabel={addedLabel}
         />
       ))}
       {hasMoreChildren(rootPath) && (

@@ -58,7 +58,16 @@ export function TransferWizard({
   } = useContentTransfer();
 
   // ── Step state ────────────────────────────────────────────────────────────
-  const [currentStep, setCurrentStep] = useState(0);
+  // Dashboard quick-launch already collected a valid route, so do not ask the
+  // user to confirm the same environments a second time. Direct/manual entry
+  // still starts on the environment step.
+  const [currentStep, setCurrentStep] = useState(() =>
+    initialSourceId &&
+    initialDestinationId &&
+    initialSourceId !== initialDestinationId
+      ? 1
+      : 0,
+  );
 
   // ── Form state ────────────────────────────────────────────────────────────
   const [sourceId, setSourceId] = useState<string | null>(

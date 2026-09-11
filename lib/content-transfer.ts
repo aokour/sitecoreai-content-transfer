@@ -16,6 +16,11 @@ export type TransferPhase =
   | "preparing"
   | "transferring"
   | "importing"
+  // Backup-only: pulling chunks from the source and writing them to the archive.
+  | "downloading"
+  | "archiving"
+  // Restore-only: reading chunks back out of the archive.
+  | "reading"
   | "completed"
   | "failed";
 
@@ -119,6 +124,9 @@ export const TRANSFER_PHASE_LABELS: Record<TransferPhase, string> = {
   preparing: "Packaging content...",
   transferring: "Transferring chunks...",
   importing: "Importing to destination...",
+  downloading: "Downloading chunks...",
+  archiving: "Writing archive...",
+  reading: "Reading archive...",
   completed: "Completed",
   failed: "Failed",
 };
@@ -128,6 +136,21 @@ export const TRANSFER_PHASE_LABELS: Record<TransferPhase, string> = {
 /** Returns true if the given Sitecore item path is under the Media Library. */
 export function isMediaPath(itemPath: string): boolean {
   return itemPath.toLowerCase().startsWith("/sitecore/media library");
+}
+
+/** Phases where work is in flight, across transfer, backup and restore. */
+export const ACTIVE_PHASES: TransferPhase[] = [
+  "creating",
+  "preparing",
+  "transferring",
+  "importing",
+  "downloading",
+  "archiving",
+  "reading",
+];
+
+export function isActivePhase(phase: TransferPhase): boolean {
+  return ACTIVE_PHASES.includes(phase);
 }
 
 export type StatusColorScheme = "neutral" | "primary" | "success" | "danger" | "warning";
