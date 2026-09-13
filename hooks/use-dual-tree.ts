@@ -1,7 +1,14 @@
 "use client";
 
 import { useMarketplaceClient } from "@/components/providers/marketplace";
+import { findEnvironmentById } from "@/lib/content-transfer";
+import { resolveEnvironmentClient } from "@/lib/environment-client/resolve";
+import type {
+  EnvironmentClient,
+  GraphQLError,
+} from "@/lib/environment-client/types";
 import { useCallback, useRef, useState } from "react";
+import { useEnvironments } from "./use-environments";
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -46,24 +53,18 @@ interface RawTreeNode {
 }
 
 /**
- * The full GraphQL HTTP response envelope. `nodes` entries can be `null` at
- * runtime when a field on that item errors (e.g. a broken/inaccessible
- * template) — Sitecore null-propagates the whole node, not just the field —
- * even though the schema's declared type lies about this.
+ * The GraphQL query's `data` shape. `nodes` entries can be `null` at runtime
+ * when a field on that item errors (e.g. a broken/inaccessible template) —
+ * Sitecore null-propagates the whole node, not just the field — even though
+ * the schema's declared type lies about this.
  */
-interface GraphQLEnvelope {
-  data?: {
-    item?: {
-      children?: {
-        nodes: (RawTreeNode | null)[];
-        pageInfo?: { endCursor: string | null; hasNextPage: boolean };
-      };
+interface ItemChildrenData {
+  item?: {
+    children?: {
+      nodes: (RawTreeNode | null)[];
+      pageInfo?: { endCursor: string | null; hasNextPage: boolean };
     };
   };
-  errors?: Array<{
-    message?: string;
-    path?: Array<string | number>;
-  }>;
 }
 
 type Side = "source" | "destination";
@@ -146,9 +147,7 @@ function extractErrorMessage(err: unknown): string {
 }
 
 /** Scans GraphQL error paths for a "nodes" segment and returns the numeric index that follows it, if any. */
-function extractBadIndices(
-  errors: NonNullable<GraphQLEnvelope["errors"]>,
-): number[] {
+function extractBadIndices(errors: GraphQLError[]): number[] {
   const indices = new Set<number>();
   for (const e of errors) {
     const path = e.path;
@@ -161,10 +160,7 @@ function extractBadIndices(
   return [...indices];
 }
 
-function summarizePartialErrors(
-  errors: NonNullable<GraphQLEnvelope["errors"]>,
-  badCount: number,
-): string {
+function summarizePartialErrors(errors: GraphQLError[], badCount: number): string {
   const messages = [
     ...new Set(errors.map((e) => e.message).filter((m): m is string => !!m)),
   ];
@@ -255,9 +251,7 @@ function mergeNodes(
 // "partial" error describing any items that were nulled by a GraphQL error.
 
 async function fetchSideNodes(
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  client: any,
-  contextId: string,
+  envClient: EnvironmentClient,
   variables: { path: string; systemLocale: string; first: number; after: string | null },
 ): Promise<{
   nodes: RawTreeNode[];
@@ -265,19 +259,16 @@ async function fetchSideNodes(
   endCursor: string | null;
   hasMore: boolean;
 }> {
-  const res = await client.mutate("xmc.authoring.graphql", {
-    params: {
-      body: { query: GET_CHILDREN_WITH_META, variables },
-      query: { sitecoreContextId: contextId },
-    },
-  });
-
-  const resAny = res as unknown as { data?: unknown; error?: unknown };
-  if (resAny.error || !resAny.data) {
-    throw new Error(extractErrorMessage(resAny.error ?? "Failed to load children"));
+  let envelope: { data: ItemChildrenData | null; errors?: GraphQLError[] };
+  try {
+    envelope = await envClient.graphql<ItemChildrenData>(
+      GET_CHILDREN_WITH_META,
+      variables,
+    );
+  } catch (err) {
+    throw new Error(extractErrorMessage(err));
   }
 
-  const envelope = resAny.data as GraphQLEnvelope;
   const rawNodes = envelope.data?.item?.children?.nodes ?? [];
   const pageInfo = envelope.data?.item?.children?.pageInfo;
   const endCursor = pageInfo?.endCursor ?? null;
@@ -314,7 +305,8 @@ export function useDualTree(
   sourceContextId: string | null,
   destinationContextId: string | null,
 ) {
-  const client = useMarketplaceClient();
+  const sdkClient = useMarketplaceClient();
+  const environments = useEnvironments();
 
   // Map<path, DualTreeNode[]> — merged children per parent path
   const [childrenMap, setChildrenMap] = useState<Map<string, DualTreeNode[]>>(
@@ -379,13 +371,20 @@ export function useDualTree(
       });
 
       try {
-        const fetchSide = (contextId: string, side: Side) =>
-          fetchSideNodes(client, contextId, {
+        const fetchSide = (side: Side) => {
+          const id = side === "source" ? sourceContextId : destinationContextId;
+          const env = findEnvironmentById(environments, id);
+          if (!env) {
+            return Promise.reject(new Error(`Unknown environment: ${id}`));
+          }
+          const envClient = resolveEnvironmentClient(env, sdkClient);
+          return fetchSideNodes(envClient, {
             path,
             systemLocale: "en",
             first: PAGE_SIZE,
             after: pageState[side].cursor,
           });
+        };
 
         // On a loadMore call, skip a side entirely once it has no more pages —
         // same reasoning as skipping the destination fetch when there's no
@@ -397,11 +396,9 @@ export function useDualTree(
         // Fetch both environments independently — a hard failure on one side
         // must not prevent the other side's data from rendering.
         const [srcOutcome, dstOutcome] = await Promise.allSettled([
-          shouldFetchSource
-            ? fetchSide(sourceContextId, "source")
-            : Promise.resolve(null),
+          shouldFetchSource ? fetchSide("source") : Promise.resolve(null),
           shouldFetchDestination
-            ? fetchSide(destinationContextId as string, "destination")
+            ? fetchSide("destination")
             : Promise.resolve(null),
         ]);
 
@@ -515,7 +512,7 @@ export function useDualTree(
         });
       }
     },
-    [client, sourceContextId, destinationContextId],
+    [sdkClient, environments, sourceContextId, destinationContextId],
   );
 
   const getDualChildren = useCallback(

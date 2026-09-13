@@ -5,10 +5,11 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { useEnvironments } from "@/hooks/use-environments";
-import { getEnvironmentLabel } from "@/lib/content-transfer";
+import { getEnvironmentId, getEnvironmentLabel } from "@/lib/content-transfer";
 import { ArrowRight, Layers } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
+import { AddLocalEnvironmentButton } from "./add-local-environment-button";
 
 export function EnvironmentQuickLaunch() {
   const environments = useEnvironments();
@@ -18,12 +19,16 @@ export function EnvironmentQuickLaunch() {
 
   if (environments.length === 0) {
     return (
-      <Alert variant="warning">
-        <AlertDescription>
-          No environments found in application context. Ensure this app has been
-          granted access to SitecoreAI environments when you installed it.
-        </AlertDescription>
-      </Alert>
+      <div className="space-y-3">
+        <Alert variant="warning">
+          <AlertDescription>
+            No environments found in application context. Ensure this app has
+            been granted access to SitecoreAI environments when you installed
+            it, or add a local Docker environment below.
+          </AlertDescription>
+        </Alert>
+        <AddLocalEnvironmentButton />
+      </div>
     );
   }
 
@@ -39,16 +44,16 @@ export function EnvironmentQuickLaunch() {
     }
   }
 
-  const source = environments.find((e) => e.context.preview === sourceId);
+  const source = environments.find((e) => getEnvironmentId(e) === sourceId);
   const destination = environments.find(
-    (e) => e.context.preview === destinationId,
+    (e) => getEnvironmentId(e) === destinationId,
   );
 
   return (
     <div className="space-y-4">
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4">
         {environments.map((env) => {
-          const id = env.context.preview;
+          const id = getEnvironmentId(env);
           const isSource = id === sourceId;
           const isDestination = id === destinationId;
           const selected = isSource || isDestination;
@@ -120,6 +125,8 @@ export function EnvironmentQuickLaunch() {
           </Button>
         </div>
       )}
+
+      <AddLocalEnvironmentButton />
     </div>
   );
 }

@@ -6,7 +6,7 @@ import type {
   TransferConfig,
   TransferPhase,
 } from "@/lib/content-transfer";
-import { isMediaPath } from "@/lib/content-transfer";
+import { findEnvironmentById, isMediaPath } from "@/lib/content-transfer";
 import {
   completeChunkSet,
   consumeFileWithRetry,
@@ -17,7 +17,10 @@ import {
   pollTransferStatus,
   saveChunkWithRetry,
 } from "@/lib/content-transfer-primitives";
+import { resolveEnvironmentClient } from "@/lib/environment-client/resolve";
+import type { ContentTransferTransport } from "@/lib/environment-client/types";
 import { useCallback, useRef, useState } from "react";
+import { useEnvironments } from "./use-environments";
 
 const { log, logError, logWarn } = createLogger("[ContentTransfer]");
 
@@ -31,7 +34,8 @@ export interface TransferProgress {
 }
 
 export function useContentTransfer() {
-  const client = useMarketplaceClient();
+  const sdkClient = useMarketplaceClient();
+  const environments = useEnvironments();
   const [phase, setPhase] = useState<TransferPhase>("idle");
   const [progress, setProgress] = useState(0);
   const [error, setError] = useState<string | null>(null);
@@ -52,6 +56,8 @@ export function useContentTransfer() {
 
   async function runSingleTransfer(
     subConfig: TransferConfig,
+    sourceTransport: ContentTransferTransport,
+    destinationTransport: ContentTransferTransport,
     isMedia: boolean,
     progressOffset: number,
     progressShare: number,
@@ -68,35 +74,10 @@ export function useContentTransfer() {
       isMedia,
     });
 
-    const createRes = await client.mutate(
-      "xmc.contentTransfer.createContentTransfer",
-      {
-        params: {
-          body: {
-            transferId: subConfig.transferId,
-            configuration: {
-              dataTrees: subConfig.dataTrees,
-            },
-          },
-          query: { sitecoreContextId: subConfig.sourceContextId },
-        },
-      },
+    await sourceTransport.createContentTransfer(
+      subConfig.transferId,
+      subConfig.dataTrees,
     );
-    const createResAny = createRes as unknown as {
-      error?: unknown;
-      data?: unknown;
-    };
-    log(`Step1${label}`, `createContentTransfer response`, createResAny);
-    if (createResAny.error) {
-      logError(
-        `Step1${label}`,
-        "createContentTransfer failed",
-        createResAny.error,
-      );
-      throw new Error(
-        `createContentTransfer failed: ${JSON.stringify(createResAny.error)}`,
-      );
-    }
     log(`Step1${label}`, `✓ Transfer created on source`);
 
     if (abortRef.current) throw new Error("Transfer aborted");
@@ -106,9 +87,8 @@ export function useContentTransfer() {
     setProgress(progressOffset + Math.round(progressShare * 0.1));
     log(`Step2${label}`, `Waiting for source to finish packaging...`);
 
-    const chunkSets = await pollTransferStatus(client, {
+    const chunkSets = await pollTransferStatus(sourceTransport, {
       transferId: subConfig.transferId,
-      sourceContextId: subConfig.sourceContextId,
       shouldAbort,
       logger,
       onChunkSets: (sets) => setChunkSetsMetadata((prev) => [...prev, ...sets]),
@@ -141,32 +121,21 @@ export function useContentTransfer() {
       for (let chunkIndex = 0; chunkIndex < chunkSet.ChunkCount; chunkIndex++) {
         if (abortRef.current) throw new Error("Transfer aborted");
 
-        const chunkBlob = await getChunkWithRetry(client, {
+        const chunkBlob = await getChunkWithRetry(sourceTransport, {
           transferId: subConfig.transferId,
           chunksetId: chunkSet.ChunkSetId,
           chunkId: chunkIndex,
-          sourceContextId: subConfig.sourceContextId,
           label,
           logNote: `${chunkIndex + 1}/${chunkSet.ChunkCount}`,
           shouldAbort,
           logger,
         });
 
-        // Send the raw Blob directly — DO NOT convert to ArrayBuffer.
-        // The SDK defines saveChunk with bodySerializer:null and
-        // Content-Type:application/octet-stream, meaning it passes the body
-        // through to fetch without any serialization. ArrayBuffer serialises
-        // to {} through JSON.stringify (loses all data), which is what caused
-        // the server-side "Maximum call stack size exceeded" — Sitecore was
-        // receiving an empty body and its error-handling path recursed.
-        // isMedia must be explicitly passed — omitting the parameter (even though
-        // the API spec marks it optional with default false) causes a 405 error.
-        await saveChunkWithRetry(client, {
+        await saveChunkWithRetry(destinationTransport, {
           transferId: subConfig.transferId,
           chunksetId: chunkSet.ChunkSetId,
           chunkId: chunkIndex,
           body: chunkBlob,
-          destinationContextId: subConfig.destinationContextId,
           isMedia,
           label,
           logNote: `${chunkIndex + 1}/${chunkSet.ChunkCount}`,
@@ -186,10 +155,9 @@ export function useContentTransfer() {
       }
 
       // 3b: Signal completion of this chunk set → get assembled file name
-      const fileName = await completeChunkSet(client, {
+      const fileName = await completeChunkSet(destinationTransport, {
         transferId: subConfig.transferId,
         chunksetId: chunkSet.ChunkSetId,
-        destinationContextId: subConfig.destinationContextId,
         label,
         logger,
       });
@@ -199,18 +167,17 @@ export function useContentTransfer() {
       );
 
       // 3c: Kick off import of this chunk set's assembled file on destination
-      await consumeFileWithRetry(client, {
+      await consumeFileWithRetry(destinationTransport, {
         fileName,
-        destinationContextId: subConfig.destinationContextId,
         label,
         shouldAbort,
         logger,
       });
 
       // Push the RAW file name for Step 4 blob-state polling.
-      // Do NOT push the blob://-prefixed form — that prefix is only valid for
-      // consumeFile. GetBlobState resolves the string as a literal Azure blob
-      // name, so the prefixed form always returns 404 BlobNotFound.
+      // Do NOT push a prefixed form — that prefix is only valid for
+      // consumeFile. GetBlobState resolves the string as a literal blob
+      // name, so a prefixed form always returns 404 BlobNotFound.
       transferFileNames.push(fileName);
     }
 
@@ -225,9 +192,8 @@ export function useContentTransfer() {
 
     for (const fileName of transferFileNames) {
       if (abortRef.current) throw new Error("Transfer aborted");
-      await pollBlobState(client, {
+      await pollBlobState(destinationTransport, {
         fileName,
-        destinationContextId: subConfig.destinationContextId,
         shouldAbort,
         logger,
       });
@@ -240,9 +206,8 @@ export function useContentTransfer() {
       `Step5${label}`,
       `Deleting transfer from source — transferId=${subConfig.transferId}`,
     );
-    await deleteTransferQuietly(client, {
+    await deleteTransferQuietly(sourceTransport, {
       transferId: subConfig.transferId,
-      contextId: subConfig.sourceContextId,
       side: "source",
       label,
       logger,
@@ -250,9 +215,8 @@ export function useContentTransfer() {
 
     // The destination never created a transfer record, so this is best-effort
     // parity cleanup only — a 400/404 here is the expected response.
-    await deleteTransferQuietly(client, {
+    await deleteTransferQuietly(destinationTransport, {
       transferId: subConfig.transferId,
-      contextId: subConfig.destinationContextId,
       side: "destination",
       label,
       logger,
@@ -275,15 +239,16 @@ export function useContentTransfer() {
   // DELETE /sources/blobs/{blobName} (v3 Item Transfer API) to purge.
   async function cleanupSubTransfer(
     subConfig: TransferConfig,
+    sourceTransport: ContentTransferTransport,
+    destinationTransport: ContentTransferTransport,
     label: string,
   ): Promise<void> {
-    for (const [ctx, side] of [
-      [subConfig.sourceContextId, "source"],
-      [subConfig.destinationContextId, "destination"],
+    for (const [transport, side] of [
+      [sourceTransport, "source"],
+      [destinationTransport, "destination"],
     ] as const) {
-      await deleteTransferQuietly(client, {
+      await deleteTransferQuietly(transport, {
         transferId: subConfig.transferId,
-        contextId: ctx,
         side,
         label,
         logger,
@@ -306,6 +271,28 @@ export function useContentTransfer() {
       setTransferId(config.transferId);
 
       try {
+        const sourceEnv = findEnvironmentById(
+          environments,
+          config.sourceContextId,
+        );
+        const destinationEnv = findEnvironmentById(
+          environments,
+          config.destinationContextId,
+        );
+        if (!sourceEnv || !destinationEnv) {
+          throw new Error(
+            "Could not resolve the selected source/destination environment.",
+          );
+        }
+        const sourceTransport = resolveEnvironmentClient(
+          sourceEnv,
+          sdkClient,
+        ).contentTransfer;
+        const destinationTransport = resolveEnvironmentClient(
+          destinationEnv,
+          sdkClient,
+        ).contentTransfer;
+
         // Split dataTrees into media and content groups
         const mediaTrees = config.dataTrees.filter((dt) =>
           isMediaPath(dt.itemPath),
@@ -355,6 +342,8 @@ export function useContentTransfer() {
           try {
             await runSingleTransfer(
               subConfig,
+              sourceTransport,
+              destinationTransport,
               isMedia,
               progressOffset,
               progressShare,
@@ -366,7 +355,12 @@ export function useContentTransfer() {
             // Without this, failed transfers leave the operation and its
             // staged chunk data parked on both sides — and the media
             // sub-transfer's generated transferId would be unrecoverable.
-            await cleanupSubTransfer(subConfig, label);
+            await cleanupSubTransfer(
+              subConfig,
+              sourceTransport,
+              destinationTransport,
+              label,
+            );
             throw err;
           }
         }
@@ -389,23 +383,23 @@ export function useContentTransfer() {
       }
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [client],
+    [sdkClient, environments],
   );
 
   const deleteTransfer = useCallback(
     async (tid: string, sourceContextId: string) => {
       try {
-        await client.mutate("xmc.contentTransfer.deleteContentTransfer", {
-          params: {
-            path: { transferId: tid },
-            query: { sitecoreContextId: sourceContextId },
-          },
-        });
+        const env = findEnvironmentById(environments, sourceContextId);
+        if (!env) return;
+        await resolveEnvironmentClient(
+          env,
+          sdkClient,
+        ).contentTransfer.deleteContentTransfer(tid);
       } catch {
         // Best-effort cleanup, ignore errors
       }
     },
-    [client],
+    [sdkClient, environments],
   );
 
   const reset = useCallback(() => {

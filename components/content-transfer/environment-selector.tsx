@@ -11,18 +11,37 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import {
+  getEnvironmentId,
   getEnvironmentLabel,
-  type ResourceAccessEntry,
+  type EnvironmentEntry,
 } from "@/lib/content-transfer";
 import { ArrowRight, X } from "lucide-react";
+import { AddLocalEnvironmentButton } from "./add-local-environment-button";
 
 interface EnvironmentSelectorProps {
-  environments: ResourceAccessEntry[];
+  environments: EnvironmentEntry[];
   sourceId: string | null;
   destinationId: string | null;
   onSourceChange: (id: string | null) => void;
   onDestinationChange: (id: string | null) => void;
   disabled?: boolean;
+}
+
+/** Small identity badge next to an environment's name — the marketplace
+ *  tenant id prefix for real environments, or a "Local Docker" tag. */
+function EnvironmentBadge({ env }: { env: EnvironmentEntry }) {
+  if (env.kind === "local-docker") {
+    return (
+      <Badge colorScheme="warning" size="sm">
+        Local Docker
+      </Badge>
+    );
+  }
+  return (
+    <Badge colorScheme="neutral" size="sm">
+      {env.tenantId.slice(0, 6)}
+    </Badge>
+  );
 }
 
 export function EnvironmentSelector({
@@ -33,12 +52,14 @@ export function EnvironmentSelector({
   onDestinationChange,
   disabled = false,
 }: EnvironmentSelectorProps) {
-  const sourceEnv = environments.find((e) => e.context.preview === sourceId);
-  const destEnv = environments.find((e) => e.context.preview === destinationId);
+  const sourceEnv = environments.find((e) => getEnvironmentId(e) === sourceId);
+  const destEnv = environments.find(
+    (e) => getEnvironmentId(e) === destinationId,
+  );
 
   return (
     <Card>
-      <CardContent className="pt-6">
+      <CardContent className="pt-6 space-y-4">
         <div className="flex flex-col sm:flex-row items-start sm:items-center gap-4">
           {/* Source */}
           <div className="flex-1 space-y-2 w-full">
@@ -55,20 +76,21 @@ export function EnvironmentSelector({
                   <SelectValue placeholder="Select source environment..." />
                 </SelectTrigger>
                 <SelectContent>
-                  {environments.map((env) => (
-                    <SelectItem
-                      key={env.context.preview}
-                      value={env.context.preview}
-                      disabled={env.context.preview === destinationId}
-                    >
-                      <div className="flex items-center gap-2">
-                        <span>{getEnvironmentLabel(env)}</span>
-                        <Badge colorScheme="neutral" size="sm">
-                          {env.tenantId.slice(0, 6)}
-                        </Badge>
-                      </div>
-                    </SelectItem>
-                  ))}
+                  {environments.map((env) => {
+                    const id = getEnvironmentId(env);
+                    return (
+                      <SelectItem
+                        key={id}
+                        value={id}
+                        disabled={id === destinationId}
+                      >
+                        <div className="flex items-center gap-2">
+                          <span>{getEnvironmentLabel(env)}</span>
+                          <EnvironmentBadge env={env} />
+                        </div>
+                      </SelectItem>
+                    );
+                  })}
                 </SelectContent>
               </Select>
               {sourceId && !disabled && (
@@ -86,7 +108,11 @@ export function EnvironmentSelector({
               )}
             </div>
             <p className="text-xs text-muted-foreground truncate min-h-[1rem]">
-              {sourceEnv ? `Context: ${sourceEnv.context.preview}` : ""}
+              {sourceEnv
+                ? sourceEnv.kind === "marketplace"
+                  ? `Context: ${sourceEnv.context.preview}`
+                  : sourceEnv.baseUrl
+                : ""}
             </p>
           </div>
 
@@ -112,20 +138,21 @@ export function EnvironmentSelector({
                   <SelectValue placeholder="Select destination environment..." />
                 </SelectTrigger>
                 <SelectContent>
-                  {environments.map((env) => (
-                    <SelectItem
-                      key={env.context.preview}
-                      value={env.context.preview}
-                      disabled={env.context.preview === sourceId}
-                    >
-                      <div className="flex items-center gap-2">
-                        <span>{getEnvironmentLabel(env)}</span>
-                        <Badge colorScheme="neutral" size="sm">
-                          {env.tenantId.slice(0, 6)}
-                        </Badge>
-                      </div>
-                    </SelectItem>
-                  ))}
+                  {environments.map((env) => {
+                    const id = getEnvironmentId(env);
+                    return (
+                      <SelectItem
+                        key={id}
+                        value={id}
+                        disabled={id === sourceId}
+                      >
+                        <div className="flex items-center gap-2">
+                          <span>{getEnvironmentLabel(env)}</span>
+                          <EnvironmentBadge env={env} />
+                        </div>
+                      </SelectItem>
+                    );
+                  })}
                 </SelectContent>
               </Select>
               {destinationId && !disabled && (
@@ -143,17 +170,23 @@ export function EnvironmentSelector({
               )}
             </div>
             <p className="text-xs text-muted-foreground truncate min-h-[1rem]">
-              {destEnv ? `Context: ${destEnv.context.preview}` : ""}
+              {destEnv
+                ? destEnv.kind === "marketplace"
+                  ? `Context: ${destEnv.context.preview}`
+                  : destEnv.baseUrl
+                : ""}
             </p>
           </div>
         </div>
 
         {environments.length === 0 && (
-          <p className="text-sm text-muted-foreground mt-3">
+          <p className="text-sm text-muted-foreground">
             No environments available. Ensure the app is granted access to
             SitecoreAI environments.
           </p>
         )}
+
+        <AddLocalEnvironmentButton />
       </CardContent>
     </Card>
   );

@@ -1,8 +1,11 @@
 "use client";
 
 import { useMarketplaceClient } from "@/components/providers/marketplace";
-import type { ChunkSetMetadata, ContentTransferStatus } from "@/lib/content-transfer";
+import { findEnvironmentById } from "@/lib/content-transfer";
+import type { ChunkSetMetadata } from "@/lib/content-transfer";
+import { resolveEnvironmentClient } from "@/lib/environment-client/resolve";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useEnvironments } from "./use-environments";
 
 const POLL_INTERVAL_MS = 3000;
 
@@ -20,9 +23,10 @@ interface UseTransferStatusResult {
  */
 export function useTransferStatus(
   transferId: string | null,
-  sourceContextId: string | null
+  sourceContextId: string | null,
 ): UseTransferStatusResult {
-  const client = useMarketplaceClient();
+  const sdkClient = useMarketplaceClient();
+  const environments = useEnvironments();
   const [state, setState] = useState<string | null>(null);
   const [chunkSetsMetadata, setChunkSetsMetadata] = useState<ChunkSetMetadata[]>([]);
   const [isLoading, setIsLoading] = useState(false);
@@ -32,20 +36,14 @@ export function useTransferStatus(
 
   const fetchStatus = useCallback(async () => {
     if (!transferId || !sourceContextId) return;
+    const sourceEnv = findEnvironmentById(environments, sourceContextId);
+    if (!sourceEnv) return;
     setIsLoading(true);
     try {
-      const res = await client.query(
-        "xmc.contentTransfer.getContentTransferStatus",
-        {
-          params: {
-            path: { transferId },
-            query: { sitecoreContextId: sourceContextId },
-          },
-        }
-      );
+      const transport = resolveEnvironmentClient(sourceEnv, sdkClient)
+        .contentTransfer;
+      const data = await transport.getContentTransferStatus(transferId);
       if (!isMountedRef.current) return;
-      // client.query() returns QueryResult<K>; actual payload is at .data.data
-      const data = (res?.data as unknown as { data?: ContentTransferStatus })?.data;
       if (data) {
         setState(data.State ?? null);
         setChunkSetsMetadata(data.ChunkSetsMetadata ?? []);
@@ -63,7 +61,7 @@ export function useTransferStatus(
     } finally {
       if (isMountedRef.current) setIsLoading(false);
     }
-  }, [client, transferId, sourceContextId]);
+  }, [sdkClient, environments, transferId, sourceContextId]);
 
   useEffect(() => {
     isMountedRef.current = true;

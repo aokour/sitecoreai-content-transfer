@@ -1,12 +1,19 @@
 "use client";
 
 import { useAppContext } from "@/components/providers/marketplace";
-import type { ResourceAccessEntry } from "@/lib/content-transfer";
+import type {
+  EnvironmentEntry,
+  ResourceAccessEntry,
+} from "@/lib/content-transfer";
 import { useMemo } from "react";
+import { useLocalDockerEnvironments } from "./use-local-docker-environments";
 
-/** Returns the SitecoreAI environments this app has been granted access to. */
-export function useEnvironments(): ResourceAccessEntry[] {
+/** Returns every environment this app can talk to — both real SitecoreAI
+ *  environments granted via the Marketplace (resourceAccess) and any locally
+ *  registered Docker instances. */
+export function useEnvironments(): EnvironmentEntry[] {
   const appContext = useAppContext();
+  const { environments: dockerEnvironments } = useLocalDockerEnvironments();
 
   return useMemo(() => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -14,6 +21,9 @@ export function useEnvironments(): ResourceAccessEntry[] {
       ? appContext.resourceAccess
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       : (appContext as any)?.resources ?? [];
-    return raw as ResourceAccessEntry[];
-  }, [appContext]);
+    const marketplaceEnvironments: EnvironmentEntry[] = (
+      raw as ResourceAccessEntry[]
+    ).map((e) => ({ ...e, kind: "marketplace" as const }));
+    return [...marketplaceEnvironments, ...dockerEnvironments];
+  }, [appContext, dockerEnvironments]);
 }

@@ -1,14 +1,16 @@
-import type { ClientSDK } from "@sitecore-marketplace-sdk/client";
-import type {
-  BlobStateResponse,
-  ChunkSetMetadata,
-  ContentTransferStatus,
-} from "@/lib/content-transfer";
+import type { ChunkSetMetadata } from "@/lib/content-transfer";
+import type { ContentTransferTransport } from "@/lib/environment-client/types";
 
 // Shared low-level plumbing for every flow that speaks the Content Transfer
 // API: transfer (source → destination), backup (source → local archive) and
-// restore (local archive → destination). Everything here takes the SDK client
-// as an argument so it can be used outside a React hook.
+// restore (local archive → destination). Everything here takes a
+// ContentTransferTransport as an argument — already bound to one environment
+// (source XOR destination) — so it works identically whether that side is a
+// real SitecoreAI environment (Marketplace SDK) or a local Docker instance
+// (direct fetch), and so it can be used outside a React hook. All retry,
+// backoff, polling and error-message logic lives here; the transport
+// implementations (lib/environment-client/*) only report the outcome of a
+// single attempt.
 
 export const POLL_INTERVAL_MS = 3000;
 export const MAX_POLL_ATTEMPTS = 120; // 6 minutes max
@@ -25,22 +27,6 @@ export const MAX_CONSUME_ATTEMPTS = 10;
 // re-encode or chunk the stream; forward it exactly as received" (the first
 // chunk of a set also carries a header, media chunks are compressed, content
 // chunks are encrypted). Client-side re-slicing is therefore NOT allowed.
-//
-// The PostMessage bridge applies a ~30s default request timeout and does NOT
-// honor the per-call timeoutMs passed to client.query/mutate. Large chunks
-// take 15-60s+ through the bridge, so the bridge default MUST be raised at
-// SDK initialization for this hook to work:
-//
-//   ClientSDK.init({ target: window.parent, modules: [XMC],
-//                    timeout: 10 * 60 * 1000 })
-//
-// The retries below handle transient failures (5xx, network blips, empty
-// responses) but cannot outwait a 30s bridge ceiling on a >30s transfer —
-// if chunk transfers time out at exactly 30s, check the init config first.
-
-// Large binary chunks can take minutes to download/upload through the PostMessage bridge.
-// The SDK default is 30s which is too short — use 6 minutes per chunk operation.
-export const CHUNK_TRANSFER_TIMEOUT_MS = 6 * 60 * 1000;
 
 /** Returns true when the caller wants the in-flight operation to stop. */
 export type AbortCheck = () => boolean;
@@ -79,39 +65,22 @@ export function sleep(ms: number) {
 // ── Polling ───────────────────────────────────────────────────────────────
 
 export async function pollTransferStatus(
-  client: ClientSDK,
+  transport: ContentTransferTransport,
   opts: {
     transferId: string;
-    sourceContextId: string;
     shouldAbort: AbortCheck;
     logger: TransferLogger;
     /** Called with each newly reported batch of chunk-set metadata. */
     onChunkSets?: (sets: ChunkSetMetadata[]) => void;
   },
 ): Promise<ChunkSetMetadata[]> {
-  const { transferId, sourceContextId, shouldAbort, logger, onChunkSets } =
-    opts;
-  logger.log(
-    "PollStatus",
-    `Polling transfer status — transferId=${transferId} srcCtx=${sourceContextId}`,
-  );
+  const { transferId, shouldAbort, logger, onChunkSets } = opts;
+  logger.log("PollStatus", `Polling transfer status — transferId=${transferId}`);
   for (let attempt = 0; attempt < MAX_POLL_ATTEMPTS; attempt++) {
     if (shouldAbort()) throw new Error("Transfer aborted");
     await sleep(POLL_INTERVAL_MS);
-    const res = await client.query(
-      "xmc.contentTransfer.getContentTransferStatus",
-      {
-        params: {
-          path: { transferId },
-          query: { sitecoreContextId: sourceContextId },
-        },
-      },
-    );
-    // client.query() returns QueryResult<K> where .data is the @hey-api response
-    // wrapper { data: T, request, response }. The actual payload is at .data.data.
-    const rawRes = res?.data as unknown;
-    const data = (rawRes as { data?: ContentTransferStatus })?.data;
-    logger.log("PollStatus", `Attempt ${attempt + 1} raw response`, rawRes);
+    const data = await transport.getContentTransferStatus(transferId);
+    logger.log("PollStatus", `Attempt ${attempt + 1} response`, data);
     if (!data) {
       logger.logWarn("PollStatus", "No data in response — retrying");
       continue;
@@ -139,40 +108,21 @@ export async function pollTransferStatus(
   throw new Error("Transfer status polling timed out");
 }
 
-// IMPORTANT: `fileName` must be the RAW blob name (e.g. "contentTransfer-....raif"),
-// WITHOUT the "blob://" scheme prefix. The Item Transfer API addresses blob sources
-// by their plain name everywhere (GET /sources/blobs/{blobName}); the scheme prefix
-// is only understood by consumeFile. Passing "blob://..." here makes the backend
-// look up an Azure blob literally named "blob://..." → 404 BlobNotFound.
 export async function pollBlobState(
-  client: ClientSDK,
+  transport: ContentTransferTransport,
   opts: {
     fileName: string;
-    destinationContextId: string;
     shouldAbort: AbortCheck;
     logger: TransferLogger;
   },
 ): Promise<void> {
-  const { fileName, destinationContextId, shouldAbort, logger } = opts;
-  logger.log(
-    "PollBlob",
-    `Polling blob state — fileName=${fileName} destCtx=${destinationContextId}`,
-  );
+  const { fileName, shouldAbort, logger } = opts;
+  logger.log("PollBlob", `Polling blob state — fileName=${fileName}`);
   for (let attempt = 0; attempt < MAX_POLL_ATTEMPTS; attempt++) {
     if (shouldAbort()) throw new Error("Transfer aborted");
     await sleep(POLL_INTERVAL_MS);
-    const res = await client.query("xmc.contentTransfer.getBlobState", {
-      params: {
-        query: { fileName, sitecoreContextId: destinationContextId },
-      },
-    });
-    // client.query() wraps the result in QueryResult; actual payload is at .data.data.
-    // OpenAPI spec (content-transfer.yaml) defines the shape as { status, details }.
-    // At runtime the API may return { BlobState, Error, Actions, ConsumedName }.
-    // We check both field names so we're compatible with either.
-    const rawRes = res?.data as unknown;
-    const data = (rawRes as { data?: BlobStateResponse })?.data;
-    logger.log("PollBlob", `Attempt ${attempt + 1} raw response`, rawRes);
+    const data = await transport.getBlobState(fileName);
+    logger.log("PollBlob", `Attempt ${attempt + 1} response`, data);
     if (!data) {
       logger.logWarn("PollBlob", "No data in response — retrying");
       continue;
@@ -224,17 +174,16 @@ export async function pollBlobState(
 }
 
 // ── saveChunk with retry ──────────────────────────────────────────────────
-// Retries transient failures: HTTP 5xx responses AND bridge-level timeout
-// exceptions (CoreError "[client SDK] Request timed out"), which client.mutate
-// THROWS rather than returning in .error. 405 and other 4xx fail fast.
+// Retries transient failures: HTTP 5xx responses AND network/bridge-level
+// exceptions (surfaced by the transport as a result with no httpStatus).
+// 405 and other 4xx fail fast.
 export async function saveChunkWithRetry(
-  client: ClientSDK,
+  transport: ContentTransferTransport,
   opts: {
     transferId: string;
     chunksetId: string;
     chunkId: number;
     body: Blob;
-    destinationContextId: string;
     isMedia: boolean;
     label: string;
     logNote: string;
@@ -247,7 +196,6 @@ export async function saveChunkWithRetry(
     chunksetId,
     chunkId,
     body,
-    destinationContextId,
     isMedia,
     label,
     logNote,
@@ -256,7 +204,7 @@ export async function saveChunkWithRetry(
   } = opts;
   logger.log(
     `Step3${label}`,
-    `  saveChunk ${logNote} → dest (Blob size=${body.size}) chunkId=${chunkId} isMedia=${isMedia} destCtx=${destinationContextId}`,
+    `  saveChunk ${logNote} → dest (Blob size=${body.size}) chunkId=${chunkId} isMedia=${isMedia}`,
   );
   for (let attempt = 0; attempt <= SAVE_CHUNK_MAX_RETRIES; attempt++) {
     if (attempt > 0) {
@@ -269,108 +217,60 @@ export async function saveChunkWithRetry(
     }
     if (shouldAbort()) throw new Error("Transfer aborted");
 
-    let saveResAny: {
-      error?: unknown;
-      data?: unknown;
-      response?: { status?: number };
-    };
-    try {
-      const saveRes = await client.mutate("xmc.contentTransfer.saveChunk", {
-        params: {
-          path: { transferId, chunksetId, chunkId },
-          body,
-          query: { sitecoreContextId: destinationContextId, isMedia },
-        },
-        timeoutMs: CHUNK_TRANSFER_TIMEOUT_MS,
-      });
-      saveResAny = saveRes as unknown as {
-        error?: unknown;
-        data?: unknown;
-        response?: { status?: number };
-      };
-    } catch (err) {
-      // Bridge timeout (or other thrown transport error). The per-call
-      // timeoutMs is not honored by the PostMessage bridge (~30s default),
-      // so large/slow uploads can land here. Treat as retryable.
-      const msg = err instanceof Error ? err.message : String(err);
-      if (attempt === SAVE_CHUNK_MAX_RETRIES) {
-        logger.logError(
-          `Step3${label}`,
-          `saveChunk threw after ${attempt + 1} attempts — chunkId=${chunkId}`,
-          err,
-        );
-        throw new Error(
-          `saveChunk failed for chunk ${chunkId} of chunkset ${chunksetId}: ${msg}. ` +
-            `If this is a bridge timeout on a large chunk, the SDK bridge's 30s default timeout must be raised (see NOTE ON LARGE CHUNKS).`,
-        );
-      }
-      logger.logWarn(
-        `Step3${label}`,
-        `  saveChunk transient exception (${msg}), will retry — chunkId=${chunkId}`,
-      );
-      continue;
-    }
-
-    logger.log(
-      `Step3${label}`,
-      `  saveChunk attempt ${attempt + 1} response`,
-      saveResAny,
+    const result = await transport.saveChunk(
+      transferId,
+      chunksetId,
+      chunkId,
+      body,
+      isMedia,
     );
-    if (!saveResAny.error) return;
+    logger.log(`Step3${label}`, `  saveChunk attempt ${attempt + 1} result`, result);
+    if (result.ok) return;
 
-    const httpStatus = saveResAny.response?.status;
+    const { httpStatus, error } = result;
     if (httpStatus === 405) {
-      logger.logError(`Step3${label}`, `saveChunk failed`, saveResAny.error);
+      logger.logError(`Step3${label}`, `saveChunk failed`, error);
       throw new Error(
         `saveChunk returned 405 Method Not Allowed (isMedia=${isMedia}). ` +
-          `The destination environment does not support the Content Transfer API (PUT /content/v1/transfers/.../chunks) through the marketplace SDK proxy. ` +
-          `Sitecore support ticket required. Details: dest=${destinationContextId}, error=${JSON.stringify(saveResAny.error)}`,
+          `The destination environment does not support the Content Transfer API (PUT .../chunks). ` +
+          `Details: ${JSON.stringify(error)}`,
       );
     }
-    const isRetryable = typeof httpStatus === "number" && httpStatus >= 500;
+    const isRetryable = httpStatus === undefined || httpStatus >= 500;
     if (!isRetryable || attempt === SAVE_CHUNK_MAX_RETRIES) {
-      logger.logError(`Step3${label}`, `saveChunk failed`, saveResAny.error);
+      logger.logError(`Step3${label}`, `saveChunk failed`, error);
       throw new Error(
-        `saveChunk failed (HTTP ${httpStatus ?? "?"}) for chunk ${chunkId} of chunkset ${chunksetId}: ${JSON.stringify(saveResAny.error)}`,
+        `saveChunk failed (HTTP ${httpStatus ?? "?"}) for chunk ${chunkId} of chunkset ${chunksetId}: ${JSON.stringify(error)}. ` +
+          (httpStatus === undefined
+            ? "If this is a bridge/network timeout on a large chunk, see the transport implementation's timeout handling."
+            : ""),
       );
     }
     logger.logWarn(
       `Step3${label}`,
-      `  saveChunk transient error (HTTP ${httpStatus}), will retry`,
-      saveResAny.error,
+      `  saveChunk transient error (HTTP ${httpStatus ?? "?"}), will retry`,
+      error,
     );
   }
 }
 
 // ── getChunk with retry ───────────────────────────────────────────────────
-// Downloads one chunk from the source. Retries thrown bridge timeouts and
-// empty responses. Note: the host completes the underlying fetch even after
-// the client bridge times out, so a retry may succeed quickly if the server
-// has the chunk warm — but a hard 30s bridge ceiling cannot be outwaited for
-// a genuinely >30s download (see NOTE ON LARGE CHUNKS at the top).
+// Downloads one chunk from the source. Retries thrown exceptions and empty
+// responses.
 export async function getChunkWithRetry(
-  client: ClientSDK,
+  transport: ContentTransferTransport,
   opts: {
     transferId: string;
     chunksetId: string;
     chunkId: number;
-    sourceContextId: string;
     label: string;
     logNote: string;
     shouldAbort: AbortCheck;
     logger: TransferLogger;
   },
 ): Promise<Blob> {
-  const {
-    transferId,
-    chunksetId,
-    chunkId,
-    sourceContextId,
-    label,
-    logNote,
-    shouldAbort,
-    logger,
-  } = opts;
+  const { transferId, chunksetId, chunkId, label, logNote, shouldAbort, logger } =
+    opts;
   let lastError: unknown = null;
   for (let attempt = 0; attempt <= GET_CHUNK_MAX_RETRIES; attempt++) {
     if (attempt > 0) {
@@ -387,42 +287,20 @@ export async function getChunkWithRetry(
       `  getChunk ${logNote} — chunksetId=${chunksetId} chunkId=${chunkId} (attempt ${attempt + 1})`,
     );
     try {
-      const chunkRes = await client.query("xmc.contentTransfer.getChunk", {
-        params: {
-          path: { transferId, chunksetId, chunkId },
-          query: { sitecoreContextId: sourceContextId },
-        },
-        timeoutMs: CHUNK_TRANSFER_TIMEOUT_MS,
-      });
-      // client.query() wraps result in QueryResult; actual payload is at .data.data
-      // getChunk returns a Blob (raw .raif protobuf binary).
-      const rawChunkRes = chunkRes?.data as unknown;
-      const chunkBlob =
-        (rawChunkRes as { data?: Blob | File | null })?.data ?? null;
-      const chunkHttpRes = (
-        rawChunkRes as { response?: { status?: number; headers?: Headers } }
-      )?.response;
+      const chunkBlob = await transport.getChunk(transferId, chunksetId, chunkId);
       logger.log(
         `Step3${label}`,
-        `  getChunk ${chunkId} raw response` +
-          ` httpStatus=${chunkHttpRes?.status ?? "?"}` +
-          ` content-type=${chunkHttpRes?.headers?.get?.("content-type") ?? "?"}` +
-          ` type=${chunkBlob ? (chunkBlob instanceof Blob ? `Blob(type="${(chunkBlob as Blob).type}")` : typeof chunkBlob) : "null"}` +
-          ` size=${chunkBlob instanceof Blob ? (chunkBlob as Blob).size : "n/a"}`,
-        rawChunkRes,
+        `  getChunk ${chunkId} result — size=${chunkBlob?.size ?? "n/a"}`,
       );
-      if (chunkBlob instanceof Blob && chunkBlob.size > 0) {
+      if (chunkBlob && chunkBlob.size > 0) {
         return chunkBlob;
       }
       lastError = new Error("getChunk returned empty blob");
       logger.logWarn(
         `Step3${label}`,
         `  getChunk returned empty/invalid blob, will retry — chunkId=${chunkId}`,
-        rawChunkRes,
       );
     } catch (err) {
-      // Bridge timeout or transport error thrown by client.query — the
-      // per-call timeoutMs is not honored by the PostMessage bridge.
       lastError = err;
       const msg = err instanceof Error ? err.message : String(err);
       logger.logWarn(
@@ -439,7 +317,7 @@ export async function getChunkWithRetry(
   throw new Error(
     `Failed to retrieve chunk ${chunkId} from chunk set ${chunksetId}: ${
       lastError instanceof Error ? lastError.message : String(lastError)
-    }. If this is a bridge timeout on a large chunk, the SDK bridge's 30s default timeout must be raised (see NOTE ON LARGE CHUNKS).`,
+    }`,
   );
 }
 
@@ -448,64 +326,18 @@ export async function getChunkWithRetry(
 /** Signals a chunk set complete on the destination and returns the assembled
  *  .raif file name. */
 export async function completeChunkSet(
-  client: ClientSDK,
+  transport: ContentTransferTransport,
   opts: {
     transferId: string;
     chunksetId: string;
-    destinationContextId: string;
     label: string;
     logger: TransferLogger;
   },
 ): Promise<string> {
-  const { transferId, chunksetId, destinationContextId, label, logger } = opts;
-  logger.log(
-    `Step3${label}`,
-    `  completeChunkSetTransfer — chunksetId=${chunksetId} destCtx=${destinationContextId}`,
-  );
-  const completeRes = await client.mutate(
-    "xmc.contentTransfer.completeChunkSetTransfer",
-    {
-      params: {
-        path: { transferId, chunksetId },
-        query: { sitecoreContextId: destinationContextId },
-      },
-    },
-  );
-  const completeResAny = completeRes as unknown as {
-    data?: { ContentTransferFileName?: string };
-    error?: unknown;
-  };
-  logger.log(`Step3${label}`, `  completeChunkSetTransfer response`, completeResAny);
-  if (completeResAny.error) {
-    logger.logError(
-      `Step3${label}`,
-      "completeChunkSetTransfer failed",
-      completeResAny.error,
-    );
-    throw new Error(
-      `completeChunkSetTransfer failed: ${JSON.stringify(completeResAny.error)}`,
-    );
-  }
-  // client.mutate() may surface the JSON body at .data or .data.data
-  // depending on SDK version — check both paths defensively.
-  const fileName =
-    completeResAny.data?.ContentTransferFileName ??
-    (
-      completeResAny.data as unknown as {
-        data?: { ContentTransferFileName?: string };
-      }
-    )?.data?.ContentTransferFileName;
-  logger.log(`Step3${label}`, `  ContentTransferFileName=${fileName ?? "(empty)"}`);
-  if (!fileName) {
-    logger.logError(
-      `Step3${label}`,
-      "completeChunkSetTransfer returned no ContentTransferFileName",
-      completeResAny,
-    );
-    throw new Error(
-      "completeChunkSetTransfer did not return a ContentTransferFileName",
-    );
-  }
+  const { transferId, chunksetId, label, logger } = opts;
+  logger.log(`Step3${label}`, `  completeChunkSetTransfer — chunksetId=${chunksetId}`);
+  const fileName = await transport.completeChunkSet(transferId, chunksetId);
+  logger.log(`Step3${label}`, `  ContentTransferFileName=${fileName}`);
   return fileName;
 }
 
@@ -514,68 +346,47 @@ export async function completeChunkSet(
 // immediately — the .raif file may not exist yet when consumeFile is first called.
 // Wait one full poll interval before the first attempt, then retry with backoff.
 export async function consumeFileWithRetry(
-  client: ClientSDK,
+  transport: ContentTransferTransport,
   opts: {
-    /** RAW blob name; the "blob://" prefix is added here. */
+    /** RAW blob name; each transport adds its own addressing prefix internally. */
     fileName: string;
-    destinationContextId: string;
     label: string;
     shouldAbort: AbortCheck;
     logger: TransferLogger;
   },
 ): Promise<void> {
-  const { fileName, destinationContextId, label, shouldAbort, logger } = opts;
-  // Both media and content use blob:// — file:// is only for on-disk file system transfers.
-  const consumeFileName = `blob://${fileName}`;
-  logger.log(
-    `Step3${label}`,
-    `  consumeFile — fileName=${consumeFileName} destCtx=${destinationContextId}`,
-  );
+  const { fileName, label, shouldAbort, logger } = opts;
+  logger.log(`Step3${label}`, `  consumeFile — fileName=${fileName}`);
   // Initial delay: give the server time to finish assembling before the first call.
   await sleep(POLL_INTERVAL_MS);
   for (let attempt = 1; attempt <= MAX_CONSUME_ATTEMPTS; attempt++) {
     if (attempt > 1) await sleep(POLL_INTERVAL_MS);
     if (shouldAbort()) throw new Error("Transfer aborted");
-    const consumeRes = await client.query("xmc.contentTransfer.consumeFile", {
-      params: {
-        query: {
-          databaseName: "master",
-          fileName: consumeFileName,
-          sitecoreContextId: destinationContextId,
-        },
-      },
-    });
-    const consumeResAny = consumeRes?.data as unknown as
-      | { error?: { Message?: string } }
-      | undefined;
+    const result = await transport.consumeFile(fileName, "master");
     logger.log(
       `Step3${label}`,
-      `  consumeFile attempt ${attempt}/${MAX_CONSUME_ATTEMPTS} response`,
-      consumeResAny,
+      `  consumeFile attempt ${attempt}/${MAX_CONSUME_ATTEMPTS} result`,
+      result,
     );
-    if (consumeResAny?.error) {
-      const msg =
-        consumeResAny.error.Message ?? JSON.stringify(consumeResAny.error);
-      if (msg.toLowerCase().includes("does not exist")) {
-        logger.logWarn(
-          `Step3${label}`,
-          `  consumeFile — file not ready yet, retrying (${attempt}/${MAX_CONSUME_ATTEMPTS})`,
-          consumeResAny.error,
-        );
-        continue;
-      }
-      logger.logError(`Step3${label}`, "consumeFile failed", consumeResAny.error);
-      throw new Error(
-        `consumeFile failed: ${JSON.stringify(consumeResAny.error)}`,
-      );
+    if (result.ok) {
+      logger.log(`Step3${label}`, `  ✓ consumeFile queued for import`);
+      return;
     }
-    logger.log(`Step3${label}`, `  ✓ consumeFile queued for import`);
-    return;
+    if (result.notReady) {
+      logger.logWarn(
+        `Step3${label}`,
+        `  consumeFile — file not ready yet, retrying (${attempt}/${MAX_CONSUME_ATTEMPTS})`,
+        result.error,
+      );
+      continue;
+    }
+    logger.logError(`Step3${label}`, "consumeFile failed", result.error);
+    throw new Error(`consumeFile failed: ${JSON.stringify(result.error)}`);
   }
   throw new Error(
     `consumeFile: file not ready after ${MAX_CONSUME_ATTEMPTS} attempts (~${Math.round(
       ((MAX_CONSUME_ATTEMPTS + 1) * POLL_INTERVAL_MS) / 1000,
-    )}s) — ${consumeFileName}`,
+    )}s) — ${fileName}`,
   );
 }
 
@@ -589,31 +400,19 @@ export async function consumeFileWithRetry(
  * cleanup never masks the original failure.
  */
 export async function deleteTransferQuietly(
-  client: ClientSDK,
+  transport: ContentTransferTransport,
   opts: {
     transferId: string;
-    contextId: string;
     side: string;
     label: string;
     logger: TransferLogger;
   },
 ): Promise<void> {
-  const { transferId, contextId, side, label, logger } = opts;
+  const { transferId, side, label, logger } = opts;
   try {
-    logger.log(
-      `Cleanup${label}`,
-      `Deleting transfer from ${side} — transferId=${transferId}`,
-    );
-    const res = await client.mutate(
-      "xmc.contentTransfer.deleteContentTransfer",
-      {
-        params: {
-          path: { transferId },
-          query: { sitecoreContextId: contextId },
-        },
-      },
-    );
-    logger.log(`Cleanup${label}`, `deleteContentTransfer ${side} response`, res);
+    logger.log(`Cleanup${label}`, `Deleting transfer from ${side} — transferId=${transferId}`);
+    await transport.deleteContentTransfer(transferId);
+    logger.log(`Cleanup${label}`, `deleteContentTransfer ${side} done`);
   } catch (e) {
     logger.logWarn(
       `Cleanup${label}`,

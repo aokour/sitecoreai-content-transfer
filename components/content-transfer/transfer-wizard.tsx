@@ -21,6 +21,7 @@ import { useEnvironments } from "@/hooks/use-environments";
 import type { DataTreeItem } from "@/lib/content-transfer";
 import {
   generateTransferId,
+  getEnvironmentId,
   getEnvironmentLabel,
   MERGE_STRATEGY_OPTIONS,
   SCOPE_OPTIONS,
@@ -82,8 +83,10 @@ export function TransferWizard({
   // ── Derived environment info ──────────────────────────────────────────────
   const environments = useEnvironments();
 
-  const sourceEnv = environments.find((e) => e.context.preview === sourceId);
-  const destEnv = environments.find((e) => e.context.preview === destinationId);
+  const sourceEnv = environments.find((e) => getEnvironmentId(e) === sourceId);
+  const destEnv = environments.find(
+    (e) => getEnvironmentId(e) === destinationId,
+  );
 
   // Reflect the transfer's final outcome on the last stepper step, instead of
   // leaving it as "active" once the transfer has actually finished/failed.

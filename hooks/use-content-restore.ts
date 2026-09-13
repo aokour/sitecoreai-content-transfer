@@ -2,7 +2,11 @@
 
 import { useMarketplaceClient } from "@/components/providers/marketplace";
 import { readArchive, type BackupManifest } from "@/lib/backup-archive";
-import type { ChunkSetMetadata, TransferPhase } from "@/lib/content-transfer";
+import {
+  findEnvironmentById,
+  type ChunkSetMetadata,
+  type TransferPhase,
+} from "@/lib/content-transfer";
 import {
   completeChunkSet,
   consumeFileWithRetry,
@@ -11,7 +15,9 @@ import {
   pollBlobState,
   saveChunkWithRetry,
 } from "@/lib/content-transfer-primitives";
+import { resolveEnvironmentClient } from "@/lib/environment-client/resolve";
 import { useCallback, useRef, useState } from "react";
+import { useEnvironments } from "./use-environments";
 
 const { log, logError, logWarn } = createLogger("[ContentRestore]");
 const logger = { log, logWarn, logError };
@@ -25,6 +31,7 @@ export interface RestoreConfig {
 
 export function useContentRestore() {
   const client = useMarketplaceClient();
+  const environments = useEnvironments();
   const [phase, setPhase] = useState<TransferPhase>("idle");
   const [progress, setProgress] = useState(0);
   const [error, setError] = useState<string | null>(null);
@@ -61,6 +68,21 @@ export function useContentRestore() {
 
       let manifest: BackupManifest | null = null;
       let archive: Awaited<ReturnType<typeof readArchive>> | null = null;
+
+      const destinationEnv = findEnvironmentById(
+        environments,
+        config.destinationContextId,
+      );
+      if (!destinationEnv) {
+        setPhase("failed");
+        setError("Could not resolve the selected destination environment.");
+        isRunningRef.current = false;
+        return;
+      }
+      const destinationTransport = resolveEnvironmentClient(
+        destinationEnv,
+        client,
+      ).contentTransfer;
 
       try {
         // ── Step 0: Read the archive ──────────────────────────────────────
@@ -127,12 +149,11 @@ export function useContentRestore() {
               // Replays the recorded transferId and chunkSetId verbatim, the
               // same way a live transfer reuses the source's IDs on the
               // destination.
-              await saveChunkWithRetry(client, {
+              await saveChunkWithRetry(destinationTransport, {
                 transferId,
                 chunksetId: chunkSet.chunkSetId,
                 chunkId: chunk.chunkId,
                 body: blob,
-                destinationContextId: config.destinationContextId,
                 isMedia,
                 label,
                 logNote: `${chunk.chunkId + 1}/${chunkSet.chunkCount}`,
@@ -163,18 +184,16 @@ export function useContentRestore() {
             setDetail(
               `Assembling package ${imported.length + 1} of ${totalChunkSets}…`,
             );
-            const fileName = await completeChunkSet(client, {
+            const fileName = await completeChunkSet(destinationTransport, {
               transferId: sub.transferId,
               chunksetId: chunkSet.chunkSetId,
-              destinationContextId: config.destinationContextId,
               label,
               logger,
             });
             log(`Step2${label}`, `  ✓ Chunk set assembled — fileName=${fileName}`);
 
-            await consumeFileWithRetry(client, {
+            await consumeFileWithRetry(destinationTransport, {
               fileName,
-              destinationContextId: config.destinationContextId,
               label,
               shouldAbort,
               logger,
@@ -189,9 +208,8 @@ export function useContentRestore() {
           setDetail(
             `Importing package ${importedChunkSets + 1} of ${totalChunkSets}…`,
           );
-          await pollBlobState(client, {
+          await pollBlobState(destinationTransport, {
             fileName,
-            destinationContextId: config.destinationContextId,
             shouldAbort,
             logger,
           });
@@ -205,9 +223,8 @@ export function useContentRestore() {
         // Parity cleanup only. Restore never created a transfer here, so a
         // 400/404 is the expected response and is swallowed.
         for (const sub of manifest.subTransfers) {
-          await deleteTransferQuietly(client, {
+          await deleteTransferQuietly(destinationTransport, {
             transferId: sub.transferId,
-            contextId: config.destinationContextId,
             side: "destination",
             label: sub.isMedia ? "[media]" : "[content]",
             logger,
@@ -237,7 +254,7 @@ export function useContentRestore() {
         isRunningRef.current = false;
       }
     },
-    [client],
+    [client, environments],
   );
 
   /** Requests cancellation. Ignored while a chunk set is mid-import. */

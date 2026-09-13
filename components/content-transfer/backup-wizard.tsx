@@ -28,11 +28,14 @@ import type { DataTreeItem } from "@/lib/content-transfer";
 import {
   MERGE_STRATEGY_OPTIONS,
   SCOPE_OPTIONS,
+  getEnvironmentId,
   getEnvironmentLabel,
+  getEnvironmentTenantId,
 } from "@/lib/content-transfer";
 import { ArrowLeft, ArrowRight, Download, RotateCcw } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useMemo, useState } from "react";
+import { AddLocalEnvironmentButton } from "./add-local-environment-button";
 import { InlineItemSelector } from "./inline-item-selector";
 import { TransferProgressDisplay, type ProgressStep } from "./transfer-progress";
 import { WizardEnvironmentPanel, WizardShell } from "./wizard-shell";
@@ -77,7 +80,7 @@ export function BackupWizard({ initialSourceId }: BackupWizardProps) {
   const [dataTrees, setDataTrees] = useState<DataTreeItem[]>([]);
 
   const environments = useEnvironments();
-  const sourceEnv = environments.find((e) => e.context.preview === sourceId);
+  const sourceEnv = environments.find((e) => getEnvironmentId(e) === sourceId);
 
   const previewFileName = useMemo(
     () => archiveFileName(label.trim() || "Content Backup", new Date()),
@@ -106,7 +109,7 @@ export function BackupWizard({ initialSourceId }: BackupWizardProps) {
     await startBackup({
       label: label.trim() || "Content Backup",
       sourceContextId: sourceId,
-      sourceTenantId: sourceEnv.tenantId,
+      sourceTenantId: getEnvironmentTenantId(sourceEnv),
       sourceTenantName: getEnvironmentLabel(sourceEnv),
       dataTrees,
     });
@@ -217,24 +220,28 @@ export function BackupWizard({ initialSourceId }: BackupWizardProps) {
                   <SelectValue placeholder="Select environment..." />
                 </SelectTrigger>
                 <SelectContent>
-                  {environments.map((env) => (
-                    <SelectItem
-                      key={env.context.preview}
-                      value={env.context.preview}
-                    >
-                      <div className="flex items-center gap-2">
-                        <span>{getEnvironmentLabel(env)}</span>
-                        <Badge colorScheme="neutral" size="sm">
-                          {env.tenantId.slice(0, 6)}
-                        </Badge>
-                      </div>
-                    </SelectItem>
-                  ))}
+                  {environments.map((env) => {
+                    const id = getEnvironmentId(env);
+                    return (
+                      <SelectItem key={id} value={id}>
+                        <div className="flex items-center gap-2">
+                          <span>{getEnvironmentLabel(env)}</span>
+                          <Badge colorScheme="neutral" size="sm">
+                            {env.kind === "local-docker"
+                              ? "Local Docker"
+                              : env.tenantId.slice(0, 6)}
+                          </Badge>
+                        </div>
+                      </SelectItem>
+                    );
+                  })}
                 </SelectContent>
               </Select>
               {sourceEnv && (
                 <p className="text-xs text-muted-foreground truncate">
-                  Context: {sourceEnv.context.preview}
+                  {sourceEnv.kind === "marketplace"
+                    ? `Context: ${sourceEnv.context.preview}`
+                    : sourceEnv.baseUrl}
                 </p>
               )}
             </div>
@@ -247,6 +254,7 @@ export function BackupWizard({ initialSourceId }: BackupWizardProps) {
                 </AlertDescription>
               </Alert>
             )}
+            <AddLocalEnvironmentButton />
           </CardContent>
         </>
       )}

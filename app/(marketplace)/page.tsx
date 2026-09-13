@@ -132,6 +132,13 @@ export default function Dashboard() {
             </div>
           </CardContent>
         </Card>
+
+        {/* Temporary dev link — Phase 0 CORS spike, remove once resolved */}
+        <p className="text-xs text-muted-foreground">
+          <Link href="/diagnostics/local-docker" className="underline">
+            Local Docker CORS diagnostic
+          </Link>
+        </p>
       </div>
     </div>
   );

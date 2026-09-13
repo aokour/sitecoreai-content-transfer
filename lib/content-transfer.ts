@@ -76,13 +76,64 @@ export interface ResourceAccessEntry {
   };
 }
 
+/**
+ * A locally-registered Docker/on-prem SitecoreAI instance, reached via direct
+ * REST/GraphQL calls instead of the Marketplace SDK's PostMessage bridge
+ * (which only knows how to route to environments registered in
+ * `appContext.resourceAccess` — a local container has no such registration).
+ * Persisted client-side only; see `lib/environment-client/local-docker-storage.ts`.
+ */
+export interface LocalDockerEnvironmentEntry {
+  kind: "local-docker";
+  /** Generated on creation (crypto.randomUUID()) — this entry's stable id. */
+  id: string;
+  displayName: string;
+  /** e.g. "https://xmcloudcm.localhost" — no trailing slash. */
+  baseUrl: string;
+  authMode: "none" | "api-key" | "manual-token";
+  apiKey?: string;
+  /** Pasted bearer token (manual-token mode), obtained out-of-band via the Sitecore CLI. */
+  token?: string;
+}
+
+/** A real SitecoreAI environment reached through the Marketplace SDK bridge. */
+export type MarketplaceEnvironmentEntry = ResourceAccessEntry & {
+  kind: "marketplace";
+};
+
+export type EnvironmentEntry =
+  | MarketplaceEnvironmentEntry
+  | LocalDockerEnvironmentEntry;
+
+/** Stable identifier for an environment, usable as a Select value / lookup key
+ *  regardless of which kind it is. */
+export function getEnvironmentId(entry: EnvironmentEntry): string {
+  return entry.kind === "marketplace" ? entry.context.preview : entry.id;
+}
+
+/** Looks up an environment by its getEnvironmentId() value. */
+export function findEnvironmentById(
+  environments: EnvironmentEntry[],
+  id: string | null | undefined,
+): EnvironmentEntry | undefined {
+  if (!id) return undefined;
+  return environments.find((e) => getEnvironmentId(e) === id);
+}
+
+/**
+ * A stable "which distinct environment is this" identifier used to detect a
+ * same-environment round trip (e.g. backing up from and restoring into the
+ * same place) — the Marketplace tenant id for real environments, or the
+ * local entry's own id for a Docker instance (which has no tenant concept).
+ */
+export function getEnvironmentTenantId(entry: EnvironmentEntry): string {
+  return entry.kind === "marketplace" ? entry.tenantId : entry.id;
+}
+
 /** Returns the best available human-readable label for an environment entry */
-export function getEnvironmentLabel(entry: ResourceAccessEntry): string {
-  return (
-    entry.tenantDisplayName ||
-    entry.tenantName ||
-    entry.tenantId
-  );
+export function getEnvironmentLabel(entry: EnvironmentEntry): string {
+  if (entry.kind === "local-docker") return entry.displayName;
+  return entry.tenantDisplayName || entry.tenantName || entry.tenantId;
 }
 
 // ─── Constants ────────────────────────────────────────────────────────────────

@@ -33,11 +33,14 @@ import {
 import {
   MERGE_STRATEGY_OPTIONS,
   SCOPE_OPTIONS,
+  getEnvironmentId,
   getEnvironmentLabel,
+  getEnvironmentTenantId,
 } from "@/lib/content-transfer";
 import { ArrowLeft, ArrowRight, RotateCcw, Upload, Play } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useRef, useState } from "react";
+import { AddLocalEnvironmentButton } from "./add-local-environment-button";
 import { RestorePreview } from "./restore-preview";
 import { TransferProgressDisplay, type ProgressStep } from "./transfer-progress";
 import { WizardEnvironmentPanel, WizardShell } from "./wizard-shell";
@@ -81,7 +84,9 @@ export function RestoreWizard() {
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const environments = useEnvironments();
-  const destEnv = environments.find((e) => e.context.preview === destinationId);
+  const destEnv = environments.find(
+    (e) => getEnvironmentId(e) === destinationId,
+  );
   const destName = destEnv ? getEnvironmentLabel(destEnv) : "the destination";
 
   const dataTrees = manifest ? manifestDataTrees(manifest) : [];
@@ -93,7 +98,7 @@ export function RestoreWizard() {
   const restoringIntoSource =
     !!manifest?.sourceTenantId &&
     !!destEnv &&
-    manifest.sourceTenantId === destEnv.tenantId;
+    manifest.sourceTenantId === getEnvironmentTenantId(destEnv);
 
   async function acceptFile(picked: File) {
     setFile(picked);
@@ -444,26 +449,31 @@ export function RestoreWizard() {
                   <SelectValue placeholder="Select environment..." />
                 </SelectTrigger>
                 <SelectContent>
-                  {environments.map((env) => (
-                    <SelectItem
-                      key={env.context.preview}
-                      value={env.context.preview}
-                    >
-                      <div className="flex items-center gap-2">
-                        <span>{getEnvironmentLabel(env)}</span>
-                        <Badge colorScheme="neutral" size="sm">
-                          {env.tenantId.slice(0, 6)}
-                        </Badge>
-                      </div>
-                    </SelectItem>
-                  ))}
+                  {environments.map((env) => {
+                    const id = getEnvironmentId(env);
+                    return (
+                      <SelectItem key={id} value={id}>
+                        <div className="flex items-center gap-2">
+                          <span>{getEnvironmentLabel(env)}</span>
+                          <Badge colorScheme="neutral" size="sm">
+                            {env.kind === "local-docker"
+                              ? "Local Docker"
+                              : env.tenantId.slice(0, 6)}
+                          </Badge>
+                        </div>
+                      </SelectItem>
+                    );
+                  })}
                 </SelectContent>
               </Select>
               {destEnv && (
                 <p className="text-xs text-muted-foreground truncate">
-                  Context: {destEnv.context.preview}
+                  {destEnv.kind === "marketplace"
+                    ? `Context: ${destEnv.context.preview}`
+                    : destEnv.baseUrl}
                 </p>
               )}
+              <AddLocalEnvironmentButton />
             </div>
 
             {restoringIntoSource && (
