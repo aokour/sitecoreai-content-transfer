@@ -9,6 +9,14 @@ import type { LocalDockerEnvironmentEntry } from "@/lib/content-transfer";
 
 const STORAGE_KEY = "sitecoreai-content-transfer:local-docker-environments:v1";
 
+// The browser's native "storage" event only fires in *other* tabs/windows,
+// never in the same document that made the change — so it can't be relied on
+// to notify other useLocalDockerEnvironments() instances in this same tab
+// (e.g. the settings dialog and the Dashboard each hold their own state).
+// Dispatching this custom event alongside every write covers that gap.
+export const LOCAL_DOCKER_ENVIRONMENTS_CHANGED_EVENT =
+  "sitecoreai-content-transfer:local-docker-environments-changed";
+
 function readAll(): LocalDockerEnvironmentEntry[] {
   if (typeof window === "undefined") return [];
   try {
@@ -24,6 +32,7 @@ function readAll(): LocalDockerEnvironmentEntry[] {
 function writeAll(entries: LocalDockerEnvironmentEntry[]): void {
   if (typeof window === "undefined") return;
   window.localStorage.setItem(STORAGE_KEY, JSON.stringify(entries));
+  window.dispatchEvent(new Event(LOCAL_DOCKER_ENVIRONMENTS_CHANGED_EVENT));
 }
 
 export function list(): LocalDockerEnvironmentEntry[] {

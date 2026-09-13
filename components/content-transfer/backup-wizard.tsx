@@ -38,9 +38,13 @@ import { ArrowLeft, ArrowRight, Download, RotateCcw } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useMemo, useState } from "react";
 import { AddLocalEnvironmentButton } from "./add-local-environment-button";
+import { DockerIcon } from "./docker-icon";
 import { EnvironmentOptionLabel } from "./environment-badge";
 import { InlineItemSelector } from "./inline-item-selector";
-import { TransferProgressDisplay, type ProgressStep } from "./transfer-progress";
+import {
+  TransferProgressDisplay,
+  type ProgressStep,
+} from "./transfer-progress";
 import { WizardEnvironmentPanel, WizardShell } from "./wizard-shell";
 
 const STEPS = [
@@ -177,29 +181,32 @@ export function BackupWizard({ initialSourceId }: BackupWizardProps) {
             </Button>
           )}
 
-          {currentStep === 3 && phase === "completed" && delivery?.redeliver && (
-            <Button
-              variant="outline"
-              className="w-full"
-              onClick={delivery.redeliver}
-            >
-              <Download className="size-4 mr-2" />
-              Save again
-            </Button>
-          )}
+          {currentStep === 3 &&
+            phase === "completed" &&
+            delivery?.redeliver && (
+              <Button
+                variant="outline"
+                className="w-full"
+                onClick={delivery.redeliver}
+              >
+                <Download className="size-4 mr-2" />
+                Save again
+              </Button>
+            )}
 
-          {currentStep === 3 && (phase === "completed" || phase === "failed") && (
-            <Button
-              className="w-full"
-              onClick={() => {
-                router.push("/backup/new");
-                window.location.reload();
-              }}
-            >
-              <RotateCcw className="size-4 mr-2" />
-              New Backup
-            </Button>
-          )}
+          {currentStep === 3 &&
+            (phase === "completed" || phase === "failed") && (
+              <Button
+                className="w-full"
+                onClick={() => {
+                  router.push("/backup/new");
+                  window.location.reload();
+                }}
+              >
+                <RotateCcw className="size-4 mr-2" />
+                New Backup
+              </Button>
+            )}
         </>
       }
     >
@@ -235,7 +242,10 @@ export function BackupWizard({ initialSourceId }: BackupWizardProps) {
                   })}
                   {dockerEnvs.length > 0 && (
                     <SelectGroup>
-                      <SelectLabel>Local Docker</SelectLabel>
+                      <SelectLabel className="flex items-center gap-1.5">
+                        <DockerIcon className="size-3.5 shrink-0" />
+                        Local Docker
+                      </SelectLabel>
                       {dockerEnvs.map((env) => {
                         const id = getEnvironmentId(env);
                         return (
@@ -278,7 +288,9 @@ export function BackupWizard({ initialSourceId }: BackupWizardProps) {
             onChange={setDataTrees}
             sourceContextId={sourceId}
             destinationContextId={null}
-            sourceEnvName={sourceEnv ? getEnvironmentLabel(sourceEnv) : undefined}
+            sourceEnvName={
+              sourceEnv ? getEnvironmentLabel(sourceEnv) : undefined
+            }
             label={label}
             onLabelChange={setLabel}
             mode="backup"

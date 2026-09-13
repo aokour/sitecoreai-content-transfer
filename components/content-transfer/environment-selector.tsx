@@ -18,6 +18,7 @@ import {
 } from "@/lib/content-transfer";
 import { ArrowRight, X } from "lucide-react";
 import { AddLocalEnvironmentButton } from "./add-local-environment-button";
+import { DockerIcon } from "./docker-icon";
 import { EnvironmentOptionLabel } from "./environment-badge";
 
 interface EnvironmentSelectorProps {
@@ -77,7 +78,10 @@ export function EnvironmentSelector({
                   })}
                   {dockerEnvs.length > 0 && (
                     <SelectGroup>
-                      <SelectLabel>Local Docker</SelectLabel>
+                      <SelectLabel className="flex items-center gap-1.5">
+                        <DockerIcon className="size-3.5 shrink-0" />
+                        Local Docker
+                      </SelectLabel>
                       {dockerEnvs.map((env) => {
                         const id = getEnvironmentId(env);
                         return (
@@ -153,7 +157,10 @@ export function EnvironmentSelector({
                   })}
                   {dockerEnvs.length > 0 && (
                     <SelectGroup>
-                      <SelectLabel>Local Docker</SelectLabel>
+                      <SelectLabel className="flex items-center gap-1.5">
+                        <DockerIcon className="size-3.5 shrink-0" />
+                        Local Docker
+                      </SelectLabel>
                       {dockerEnvs.map((env) => {
                         const id = getEnvironmentId(env);
                         const selectable = canBeDestination(env);

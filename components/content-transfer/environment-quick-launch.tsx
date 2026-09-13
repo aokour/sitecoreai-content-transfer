@@ -4,6 +4,13 @@ import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
+import type { DockerConnectionStatus } from "@/hooks/use-docker-connection-status";
+import { useDockerConnectionStatus } from "@/hooks/use-docker-connection-status";
 import { useEnvironments } from "@/hooks/use-environments";
 import {
   canBeDestination,
@@ -11,16 +18,52 @@ import {
   getEnvironmentLabel,
   type EnvironmentEntry,
 } from "@/lib/content-transfer";
-import { ArrowRight, Layers } from "lucide-react";
+import {
+  ArrowRight,
+  CheckCircle2,
+  Layers,
+  Loader2,
+  XCircle,
+} from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { AddLocalEnvironmentButton } from "./add-local-environment-button";
+import { DockerIcon } from "./docker-icon";
 
 interface EnvironmentCardGridProps {
   environments: EnvironmentEntry[];
   sourceId: string | null;
   destinationId: string | null;
   onSelect: (id: string) => void;
+  /** Per-environment reachability status — only meaningful for Docker
+   *  entries; omitted for the marketplace grid. */
+  connectionStatuses?: Record<string, DockerConnectionStatus>;
+}
+
+function ConnectionStatusDot({ status }: { status: DockerConnectionStatus }) {
+  if (status.state === "checking") {
+    return (
+      <Loader2 className="size-3 shrink-0 animate-spin text-muted-foreground" />
+    );
+  }
+  if (status.state === "ok") {
+    return (
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <CheckCircle2 className="size-3 shrink-0 text-success-fg" />
+        </TooltipTrigger>
+        <TooltipContent>Connected</TooltipContent>
+      </Tooltip>
+    );
+  }
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <XCircle className="size-3 shrink-0 text-danger-fg" />
+      </TooltipTrigger>
+      <TooltipContent className="max-w-64">{status.message}</TooltipContent>
+    </Tooltip>
+  );
 }
 
 function EnvironmentCardGrid({
@@ -28,6 +71,7 @@ function EnvironmentCardGrid({
   sourceId,
   destinationId,
   onSelect,
+  connectionStatuses,
 }: EnvironmentCardGridProps) {
   return (
     <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4">
@@ -40,6 +84,7 @@ function EnvironmentCardGrid({
         // is still open — source first, destination once source is set.
         const wouldBecomeDestination = !selected && !!sourceId;
         const disabled = wouldBecomeDestination && !canBeDestination(env);
+        const status = connectionStatuses?.[id];
 
         return (
           <Card
@@ -71,10 +116,15 @@ function EnvironmentCardGrid({
           >
             <CardContent className="p-4 space-y-2">
               <div className="flex items-center gap-2 text-muted-foreground">
-                <Layers className="size-4 shrink-0" />
+                {env.kind === "local-docker" ? (
+                  <DockerIcon className="size-4 shrink-0" />
+                ) : (
+                  <Layers className="size-4 shrink-0" />
+                )}
                 <p className="text-sm font-medium text-foreground truncate">
                   {getEnvironmentLabel(env)}
                 </p>
+                {status && <ConnectionStatusDot status={status} />}
               </div>
               <Badge
                 colorScheme={
@@ -108,6 +158,7 @@ export function EnvironmentQuickLaunch() {
 
   const marketplaceEnvs = environments.filter((e) => e.kind === "marketplace");
   const dockerEnvs = environments.filter((e) => e.kind === "local-docker");
+  const connectionStatuses = useDockerConnectionStatus(dockerEnvs);
 
   if (environments.length === 0) {
     return (
@@ -152,7 +203,8 @@ export function EnvironmentQuickLaunch() {
 
       {dockerEnvs.length > 0 && (
         <div className="space-y-2">
-          <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+          <p className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+            <DockerIcon className="size-3.5 shrink-0" />
             Local Docker
           </p>
           <EnvironmentCardGrid
@@ -160,6 +212,7 @@ export function EnvironmentQuickLaunch() {
             sourceId={sourceId}
             destinationId={destinationId}
             onSelect={selectCard}
+            connectionStatuses={connectionStatuses}
           />
         </div>
       )}

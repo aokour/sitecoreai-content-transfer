@@ -44,9 +44,13 @@ import { ArrowLeft, ArrowRight, RotateCcw, Upload, Play } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useRef, useState } from "react";
 import { AddLocalEnvironmentButton } from "./add-local-environment-button";
+import { DockerIcon } from "./docker-icon";
 import { EnvironmentOptionLabel } from "./environment-badge";
 import { RestorePreview } from "./restore-preview";
-import { TransferProgressDisplay, type ProgressStep } from "./transfer-progress";
+import {
+  TransferProgressDisplay,
+  type ProgressStep,
+} from "./transfer-progress";
 import { WizardEnvironmentPanel, WizardShell } from "./wizard-shell";
 
 const STEPS = [
@@ -147,7 +151,11 @@ export function RestoreWizard() {
   const wizardSteps = STEPS.map((step, i) => {
     if (i !== STEPS.length - 1) return step;
     if (phase === "completed") {
-      return { ...step, status: "completed" as const, description: "Completed" };
+      return {
+        ...step,
+        status: "completed" as const,
+        description: "Completed",
+      };
     }
     if (phase === "failed") return { ...step, description: "Failed" };
     return step;
@@ -228,18 +236,19 @@ export function RestoreWizard() {
             </Button>
           )}
 
-          {currentStep === 4 && (phase === "completed" || phase === "failed") && (
-            <Button
-              className="w-full"
-              onClick={() => {
-                router.push("/restore/new");
-                window.location.reload();
-              }}
-            >
-              <RotateCcw className="size-4 mr-2" />
-              New Restore
-            </Button>
-          )}
+          {currentStep === 4 &&
+            (phase === "completed" || phase === "failed") && (
+              <Button
+                className="w-full"
+                onClick={() => {
+                  router.push("/restore/new");
+                  window.location.reload();
+                }}
+              >
+                <RotateCcw className="size-4 mr-2" />
+                New Restore
+              </Button>
+            )}
         </>
       }
     >
@@ -465,12 +474,19 @@ export function RestoreWizard() {
                   })}
                   {dockerEnvs.length > 0 && (
                     <SelectGroup>
-                      <SelectLabel>Local Docker</SelectLabel>
+                      <SelectLabel className="flex items-center gap-1.5">
+                        <DockerIcon className="size-3.5 shrink-0" />
+                        Local Docker
+                      </SelectLabel>
                       {dockerEnvs.map((env) => {
                         const id = getEnvironmentId(env);
                         const selectable = canBeDestination(env);
                         return (
-                          <SelectItem key={id} value={id} disabled={!selectable}>
+                          <SelectItem
+                            key={id}
+                            value={id}
+                            disabled={!selectable}
+                          >
                             <EnvironmentOptionLabel
                               env={env}
                               disabledAsDestination={!selectable}
@@ -575,10 +591,10 @@ export function RestoreWizard() {
                 <Separator />
                 <Alert variant="success">
                   <AlertDescription>
-                    Restore complete. The imported package remains on{" "}
-                    {destName} as a retained source file — Sitecore keeps it for
-                    import history and it cannot be removed through the
-                    Marketplace SDK.
+                    Restore complete. The imported package remains on {destName}{" "}
+                    as a retained source file — Sitecore keeps it for import
+                    history and it cannot be removed through the Marketplace
+                    SDK.
                   </AlertDescription>
                 </Alert>
               </>

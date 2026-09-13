@@ -92,9 +92,12 @@ export interface LocalDockerEnvironmentEntry {
   displayName: string;
   /** e.g. "https://xmcloudcm.localhost" — no trailing slash. */
   baseUrl: string;
-  authMode: "none" | "api-key" | "manual-token";
-  apiKey?: string;
-  /** Pasted bearer token (manual-token mode), obtained out-of-band via the Sitecore CLI. */
+  /**
+   * Pasted bearer token, obtained out-of-band via the Sitecore CLI login
+   * flow. Bearer token is the only supported auth mode for a Docker
+   * environment — there's no automatable client-credentials exchange without
+   * a backend to run the CLI from, so this is always a manual paste.
+   */
   token?: string;
 }
 

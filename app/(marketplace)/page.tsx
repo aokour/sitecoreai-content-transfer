@@ -64,12 +64,6 @@ export default function Dashboard() {
                   </CardDescription>
                 </div>
               </div>
-              <Button size="sm" variant="outline" asChild>
-                <Link href="/transfer/new">
-                  Configure manually
-                  <ArrowRight className="size-4 ml-2" />
-                </Link>
-              </Button>
             </div>
           </CardHeader>
           <CardContent className="pt-6">
@@ -132,13 +126,6 @@ export default function Dashboard() {
             </div>
           </CardContent>
         </Card>
-
-        {/* Temporary dev link — Phase 0 CORS spike, remove once resolved */}
-        <p className="text-xs text-muted-foreground">
-          <Link href="/diagnostics/local-docker" className="underline">
-            Local Docker CORS diagnostic
-          </Link>
-        </p>
       </div>
     </div>
   );

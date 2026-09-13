@@ -4,8 +4,14 @@ import type { LocalDockerEnvironmentEntry } from "@/lib/content-transfer";
 import * as storage from "@/lib/environment-client/local-docker-storage";
 import { useCallback, useEffect, useState } from "react";
 
-/** React wrapper over the localStorage-backed local Docker environment
- *  registry, re-syncing when another tab changes it. */
+/**
+ * React wrapper over the localStorage-backed local Docker environment
+ * registry. Every call site (Dashboard, each wizard, the settings dialog)
+ * holds its own independent state, so this re-syncs on both the native
+ * "storage" event (fires in *other* tabs only) and a custom in-tab event
+ * local-docker-storage.ts dispatches on every write (the native event never
+ * fires in the same document that made the change).
+ */
 export function useLocalDockerEnvironments() {
   const [environments, setEnvironments] = useState<
     LocalDockerEnvironmentEntry[]
@@ -20,7 +26,17 @@ export function useLocalDockerEnvironments() {
       if (e.key === null || e.key === storage.STORAGE_KEY) refresh();
     }
     window.addEventListener("storage", onStorage);
-    return () => window.removeEventListener("storage", onStorage);
+    window.addEventListener(
+      storage.LOCAL_DOCKER_ENVIRONMENTS_CHANGED_EVENT,
+      refresh,
+    );
+    return () => {
+      window.removeEventListener("storage", onStorage);
+      window.removeEventListener(
+        storage.LOCAL_DOCKER_ENVIRONMENTS_CHANGED_EVENT,
+        refresh,
+      );
+    };
   }, [refresh]);
 
   const addEnvironment = useCallback(

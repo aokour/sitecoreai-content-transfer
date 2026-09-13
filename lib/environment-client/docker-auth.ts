@@ -22,46 +22,31 @@ export function decodeJwtExpiry(token: string): Date | null {
 }
 
 /**
- * Builds the auth provider for a local Docker environment entry. "manual-token"
- * is the primary, fully-working mode: there is no backend in this app to run
- * an OAuth/client-credentials exchange from, so the user obtains a bearer
- * token out-of-band via the Sitecore CLI and pastes it in — this provider just
+ * Builds the auth provider for a local Docker environment entry. Bearer token
+ * is the only supported mode: there is no backend in this app to run an
+ * OAuth/client-credentials exchange from, so the user obtains a bearer token
+ * out-of-band via the Sitecore CLI and pastes it in — this provider just
  * returns it, failing loudly if it has visibly expired rather than sending a
  * stale token and surfacing a confusing 401 downstream.
  */
 export function createDockerAuthProvider(
   env: LocalDockerEnvironmentEntry,
 ): DockerAuthProvider {
-  switch (env.authMode) {
-    case "none":
-      return {
-        async getToken() {
-          return null;
-        },
-      };
-    case "api-key":
-      return {
-        async getToken() {
-          return env.apiKey?.trim() || null;
-        },
-      };
-    case "manual-token":
-      return {
-        async getToken() {
-          const token = env.token?.trim();
-          if (!token) {
-            throw new Error(
-              `No bearer token saved for "${env.displayName}". Paste one obtained via the Sitecore CLI in the environment's settings.`,
-            );
-          }
-          const expiry = decodeJwtExpiry(token);
-          if (expiry && expiry.getTime() < Date.now()) {
-            throw new Error(
-              `The bearer token for "${env.displayName}" expired at ${expiry.toLocaleTimeString()}. Paste a fresh token obtained via the Sitecore CLI in the environment's settings.`,
-            );
-          }
-          return token;
-        },
-      };
-  }
+  return {
+    async getToken() {
+      const token = env.token?.trim();
+      if (!token) {
+        throw new Error(
+          `No bearer token saved for "${env.displayName}". Paste one obtained via the Sitecore CLI in the environment's settings.`,
+        );
+      }
+      const expiry = decodeJwtExpiry(token);
+      if (expiry && expiry.getTime() < Date.now()) {
+        throw new Error(
+          `The bearer token for "${env.displayName}" expired at ${expiry.toLocaleTimeString()}. Paste a fresh token obtained via the Sitecore CLI in the environment's settings.`,
+        );
+      }
+      return token;
+    },
+  };
 }
