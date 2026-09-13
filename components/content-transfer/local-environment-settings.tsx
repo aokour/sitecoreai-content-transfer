@@ -22,6 +22,7 @@ import { Separator } from "@/components/ui/separator";
 import { Textarea } from "@/components/ui/textarea";
 import { useLocalDockerEnvironments } from "@/hooks/use-local-docker-environments";
 import type { LocalDockerEnvironmentEntry } from "@/lib/content-transfer";
+import { ALLOW_LOCAL_DOCKER_DESTINATION } from "@/lib/feature-flags";
 import {
   createDockerAuthProvider,
   decodeJwtExpiry,
@@ -158,6 +159,12 @@ export function LocalEnvironmentSettings({
         <DialogHeader>
           <DialogTitle>Local Docker Environments</DialogTitle>
         </DialogHeader>
+
+        <p className="text-xs text-muted-foreground -mt-2">
+          {ALLOW_LOCAL_DOCKER_DESTINATION
+            ? "Usable as a transfer/backup source or destination in this build."
+            : "Currently usable as a transfer/backup source only. Using a local Docker environment as a destination needs additional Azure Blob Storage configuration on the container."}
+        </p>
 
         <div className="space-y-4">
           {environments.length > 0 && (

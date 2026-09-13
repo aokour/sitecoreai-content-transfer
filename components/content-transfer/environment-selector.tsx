@@ -1,22 +1,24 @@
 "use client";
 
-import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
 import {
   Select,
   SelectContent,
+  SelectGroup,
   SelectItem,
+  SelectLabel,
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
 import {
+  canBeDestination,
   getEnvironmentId,
-  getEnvironmentLabel,
   type EnvironmentEntry,
 } from "@/lib/content-transfer";
 import { ArrowRight, X } from "lucide-react";
 import { AddLocalEnvironmentButton } from "./add-local-environment-button";
+import { EnvironmentOptionLabel } from "./environment-badge";
 
 interface EnvironmentSelectorProps {
   environments: EnvironmentEntry[];
@@ -25,23 +27,6 @@ interface EnvironmentSelectorProps {
   onSourceChange: (id: string | null) => void;
   onDestinationChange: (id: string | null) => void;
   disabled?: boolean;
-}
-
-/** Small identity badge next to an environment's name — the marketplace
- *  tenant id prefix for real environments, or a "Local Docker" tag. */
-function EnvironmentBadge({ env }: { env: EnvironmentEntry }) {
-  if (env.kind === "local-docker") {
-    return (
-      <Badge colorScheme="warning" size="sm">
-        Local Docker
-      </Badge>
-    );
-  }
-  return (
-    <Badge colorScheme="neutral" size="sm">
-      {env.tenantId.slice(0, 6)}
-    </Badge>
-  );
 }
 
 export function EnvironmentSelector({
@@ -56,6 +41,8 @@ export function EnvironmentSelector({
   const destEnv = environments.find(
     (e) => getEnvironmentId(e) === destinationId,
   );
+  const marketplaceEnvs = environments.filter((e) => e.kind === "marketplace");
+  const dockerEnvs = environments.filter((e) => e.kind === "local-docker");
 
   return (
     <Card>
@@ -76,7 +63,7 @@ export function EnvironmentSelector({
                   <SelectValue placeholder="Select source environment..." />
                 </SelectTrigger>
                 <SelectContent>
-                  {environments.map((env) => {
+                  {marketplaceEnvs.map((env) => {
                     const id = getEnvironmentId(env);
                     return (
                       <SelectItem
@@ -84,13 +71,27 @@ export function EnvironmentSelector({
                         value={id}
                         disabled={id === destinationId}
                       >
-                        <div className="flex items-center gap-2">
-                          <span>{getEnvironmentLabel(env)}</span>
-                          <EnvironmentBadge env={env} />
-                        </div>
+                        <EnvironmentOptionLabel env={env} />
                       </SelectItem>
                     );
                   })}
+                  {dockerEnvs.length > 0 && (
+                    <SelectGroup>
+                      <SelectLabel>Local Docker</SelectLabel>
+                      {dockerEnvs.map((env) => {
+                        const id = getEnvironmentId(env);
+                        return (
+                          <SelectItem
+                            key={id}
+                            value={id}
+                            disabled={id === destinationId}
+                          >
+                            <EnvironmentOptionLabel env={env} />
+                          </SelectItem>
+                        );
+                      })}
+                    </SelectGroup>
+                  )}
                 </SelectContent>
               </Select>
               {sourceId && !disabled && (
@@ -138,7 +139,7 @@ export function EnvironmentSelector({
                   <SelectValue placeholder="Select destination environment..." />
                 </SelectTrigger>
                 <SelectContent>
-                  {environments.map((env) => {
+                  {marketplaceEnvs.map((env) => {
                     const id = getEnvironmentId(env);
                     return (
                       <SelectItem
@@ -146,13 +147,31 @@ export function EnvironmentSelector({
                         value={id}
                         disabled={id === sourceId}
                       >
-                        <div className="flex items-center gap-2">
-                          <span>{getEnvironmentLabel(env)}</span>
-                          <EnvironmentBadge env={env} />
-                        </div>
+                        <EnvironmentOptionLabel env={env} />
                       </SelectItem>
                     );
                   })}
+                  {dockerEnvs.length > 0 && (
+                    <SelectGroup>
+                      <SelectLabel>Local Docker</SelectLabel>
+                      {dockerEnvs.map((env) => {
+                        const id = getEnvironmentId(env);
+                        const selectable = canBeDestination(env);
+                        return (
+                          <SelectItem
+                            key={id}
+                            value={id}
+                            disabled={id === sourceId || !selectable}
+                          >
+                            <EnvironmentOptionLabel
+                              env={env}
+                              disabledAsDestination={!selectable}
+                            />
+                          </SelectItem>
+                        );
+                      })}
+                    </SelectGroup>
+                  )}
                 </SelectContent>
               </Select>
               {destinationId && !disabled && (

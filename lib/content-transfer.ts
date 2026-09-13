@@ -1,3 +1,5 @@
+import { ALLOW_LOCAL_DOCKER_DESTINATION } from "@/lib/feature-flags";
+
 // ─── Types ───────────────────────────────────────────────────────────────────
 
 // Scope values supported by the SDK (no "DescendantsOnly")
@@ -128,6 +130,18 @@ export function findEnvironmentById(
  */
 export function getEnvironmentTenantId(entry: EnvironmentEntry): string {
   return entry.kind === "marketplace" ? entry.tenantId : entry.id;
+}
+
+/**
+ * Whether an environment can be picked as a transfer/restore *destination*.
+ * Local Docker environments can't by default — the Content Transfer API's
+ * chunk-staging pipeline needs a valid Azure Blob Storage connection string
+ * configured on the destination container, which most local setups won't
+ * have — see ALLOW_LOCAL_DOCKER_DESTINATION. Source-side selection is never
+ * restricted; this only gates destination pickers.
+ */
+export function canBeDestination(entry: EnvironmentEntry): boolean {
+  return entry.kind === "marketplace" || ALLOW_LOCAL_DOCKER_DESTINATION;
 }
 
 /** Returns the best available human-readable label for an environment entry */
