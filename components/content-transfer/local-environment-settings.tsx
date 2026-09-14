@@ -27,8 +27,17 @@ import type { LocalDockerEnvironmentEntry } from "@/lib/content-transfer";
 import { decodeJwtExpiry } from "@/lib/environment-client/docker-auth";
 import { checkDockerConnection } from "@/lib/environment-client/docker-health-check";
 import { ALLOW_LOCAL_DOCKER_DESTINATION } from "@/lib/feature-flags";
-import { CheckCircle2, Loader2, Pencil, Trash2, XCircle } from "lucide-react";
-import { useState } from "react";
+import {
+  Check,
+  CheckCircle2,
+  Copy,
+  Loader2,
+  Pencil,
+  Trash2,
+  Upload,
+  XCircle,
+} from "lucide-react";
+import { useRef, useState } from "react";
 import { DockerIcon } from "./docker-icon";
 
 interface LocalEnvironmentSettingsProps {
@@ -49,6 +58,57 @@ const EMPTY_FORM: FormState = {
 };
 
 type TestResult = { ok: boolean; message: string } | null;
+
+/** Depth-first search for an "accessToken" string field anywhere in a parsed
+ *  .sitecore/user.json, so this keeps working even if the CLI adds/reorders
+ *  endpoints. The documented shape (`endpoints.xmCloud.accessToken`) is just
+ *  the first place this happens to find one. */
+function findAccessToken(value: unknown): string | null {
+  if (!value || typeof value !== "object") return null;
+  const entries = Object.entries(value as Record<string, unknown>);
+  for (const [key, val] of entries) {
+    if (key === "accessToken" && typeof val === "string" && val.trim()) {
+      return val;
+    }
+  }
+  for (const [, val] of entries) {
+    if (val && typeof val === "object") {
+      const nested = findAccessToken(val);
+      if (nested) return nested;
+    }
+  }
+  return null;
+}
+
+/** A single copyable config line/snippet used in the CORS setup instructions. */
+function CodeSnippet({ value }: { value: string }) {
+  const [copied, setCopied] = useState(false);
+  return (
+    <div className="flex items-start gap-1.5">
+      <pre className="min-w-0 flex-1 overflow-x-auto rounded bg-muted px-2 py-1.5 font-mono text-[11px]">
+        <code>{value}</code>
+      </pre>
+      <Button
+        type="button"
+        variant="ghost"
+        size="icon"
+        className="shrink-0"
+        aria-label="Copy"
+        onClick={async () => {
+          await navigator.clipboard.writeText(value);
+          setCopied(true);
+          setTimeout(() => setCopied(false), 1500);
+        }}
+      >
+        {copied ? (
+          <Check className="size-3.5 text-success-fg" />
+        ) : (
+          <Copy className="size-3.5" />
+        )}
+      </Button>
+    </div>
+  );
+}
 
 function ConnectionStatusIcon({
   status,
@@ -93,11 +153,18 @@ export function LocalEnvironmentSettings({
   const [form, setForm] = useState<FormState>(EMPTY_FORM);
   const [testResult, setTestResult] = useState<TestResult>(null);
   const [testing, setTesting] = useState(false);
+  const [importOpen, setImportOpen] = useState(false);
+  const [importError, setImportError] = useState<string | null>(null);
+  const [corsHelpOpen, setCorsHelpOpen] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   function startAdd() {
     setEditingId(null);
     setForm(EMPTY_FORM);
     setTestResult(null);
+    setImportOpen(false);
+    setImportError(null);
+    setCorsHelpOpen(false);
   }
 
   function startEdit(env: LocalDockerEnvironmentEntry) {
@@ -108,6 +175,31 @@ export function LocalEnvironmentSettings({
       token: env.token ?? "",
     });
     setTestResult(null);
+    setImportOpen(false);
+    setImportError(null);
+    setCorsHelpOpen(false);
+  }
+
+  async function handleImportFile(file: File) {
+    setImportError(null);
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(await file.text());
+    } catch {
+      setImportError(
+        "That file isn't valid JSON — make sure you selected .sitecore/user.json.",
+      );
+      return;
+    }
+    const token = findAccessToken(parsed);
+    if (!token) {
+      setImportError(
+        "Couldn't find an access token in that file. Double-check it's .sitecore/user.json, or paste your token below manually.",
+      );
+      return;
+    }
+    setForm((f) => ({ ...f, token }));
+    setImportOpen(false);
   }
 
   function save() {
@@ -224,7 +316,74 @@ export function LocalEnvironmentSettings({
           </div>
 
           <div className="space-y-1.5">
-            <Label htmlFor="ld-token">Bearer token</Label>
+            <div className="flex items-center justify-between gap-2">
+              <Label htmlFor="ld-token">Bearer token</Label>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => {
+                  setImportOpen((o) => !o);
+                  setImportError(null);
+                }}
+              >
+                <Upload className="size-3.5 mr-1.5" />
+                Import from .sitecore/user.json
+              </Button>
+            </div>
+
+            {importOpen && (
+              <div className="space-y-2.5 rounded-md border bg-muted/20 p-3 text-xs">
+                <p className="font-medium text-foreground">
+                  Get a token from the Sitecore CLI
+                </p>
+                <ol className="list-inside list-decimal space-y-1 text-muted-foreground">
+                  <li>Open a terminal at your repo root.</li>
+                  <li>
+                    Run{" "}
+                    <code className="rounded bg-muted px-1 py-0.5">
+                      dotnet sitecore cloud login
+                    </code>
+                    .
+                  </li>
+                  <li>
+                    This creates/updates{" "}
+                    <code className="rounded bg-muted px-1 py-0.5">
+                      .sitecore/user.json
+                    </code>{" "}
+                    in your repo root.
+                  </li>
+                  <li>
+                    Select that file below — it&apos;s only read in your
+                    browser, never uploaded anywhere.
+                  </li>
+                </ol>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => fileInputRef.current?.click()}
+                >
+                  Choose file…
+                </Button>
+                {importError && (
+                  <p className="text-danger-fg">{importError}</p>
+                )}
+              </div>
+            )}
+
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept="application/json,.json"
+              className="hidden"
+              onChange={(e) => {
+                const file = e.target.files?.[0];
+                e.target.value = "";
+                if (file) void handleImportFile(file);
+              }}
+            />
+
             <Textarea
               id="ld-token"
               rows={3}
@@ -240,8 +399,8 @@ export function LocalEnvironmentSettings({
               </p>
             )}
             <p className="text-xs text-muted-foreground">
-              Obtain via the Sitecore CLI login flow — this app has no backend
-              to fetch one automatically.
+              Or paste one directly — obtained via the Sitecore CLI login
+              flow, since this app has no backend to fetch one automatically.
             </p>
           </div>
 
@@ -271,12 +430,70 @@ export function LocalEnvironmentSettings({
             )}
           </div>
 
+          <div className="space-y-2">
+            <div className="flex items-center justify-between gap-2">
+              <p className="text-xs text-muted-foreground">
+                Needs CORS enabled on your local container for this
+                app&apos;s origin.
+              </p>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => setCorsHelpOpen((o) => !o)}
+              >
+                CORS setup instructions
+              </Button>
+            </div>
+
+            {corsHelpOpen && (
+              <div className="space-y-3 rounded-md border bg-muted/20 p-3 text-xs">
+                <div className="space-y-1.5">
+                  <p className="font-medium text-foreground">
+                    1. In your Sitecore host repo, edit{" "}
+                    <code className="rounded bg-muted px-1 py-0.5">
+                      local-containers/.env
+                    </code>
+                  </p>
+                  <p className="text-muted-foreground">
+                    Update{" "}
+                    <code className="rounded bg-muted px-1 py-0.5">
+                      SITECORE_GRAPHQL_CORS
+                    </code>{" "}
+                    to include this app&apos;s origin (keep your existing
+                    entries, just append this one):
+                  </p>
+                  <CodeSnippet value="SITECORE_GRAPHQL_CORS=*.sitecorecloud.io;*saicontent-transfer.vercel.app" />
+                  <p className="text-muted-foreground">
+                    Add a new variable:
+                  </p>
+                  <CodeSnippet value="SITECORE_CONTENTTRANSFER_CORS_ORIGINS=https://saicontent-transfer.vercel.app" />
+                </div>
+
+                <div className="space-y-1.5">
+                  <p className="font-medium text-foreground">
+                    2. In{" "}
+                    <code className="rounded bg-muted px-1 py-0.5">
+                      local-containers/docker-compose.override.yml
+                    </code>
+                    , under the{" "}
+                    <code className="rounded bg-muted px-1 py-0.5">cm</code>{" "}
+                    service&apos;s environment section, add:
+                  </p>
+                  <CodeSnippet value="SITECORE_CONTENTTRANSFER_CORS_ORIGINS: ${SITECORE_CONTENTTRANSFER_CORS_ORIGINS}" />
+                </div>
+
+                <p className="text-muted-foreground">
+                  Restart your containers for the change to take effect.
+                </p>
+              </div>
+            )}
+          </div>
+
           <Alert>
             <AlertDescription className="text-xs">
-              Requires CORS to be enabled on the container for this app&apos;s
-              origin. Credentials are stored only in this browser&apos;s
-              localStorage — suitable for a local/dev target, not production
-              credentials.
+              Credentials are stored only in this browser&apos;s localStorage
+              — suitable for a local/dev target, not production credentials.
             </AlertDescription>
           </Alert>
         </div>

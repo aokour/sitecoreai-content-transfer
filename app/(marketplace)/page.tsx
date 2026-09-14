@@ -9,7 +9,7 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { EnvironmentQuickLaunch } from "@/components/content-transfer/environment-quick-launch";
-import { AppBrand } from "@/components/app-brand";
+import { ContentTransferMark } from "@/components/app-brand";
 import {
   ArrowRight,
   Download,
@@ -23,29 +23,27 @@ import Link from "next/link";
 export default function Dashboard() {
   return (
     <div className="min-h-screen bg-background">
-      {/* Top bar */}
-      <div className="border-b bg-card">
-        <div className="container mx-auto px-6 py-4 flex items-center justify-between max-w-7xl">
-          <AppBrand />
-          <div className="flex items-center gap-3">
-            <Button size="sm" asChild>
-              <Link href="/transfer/new">
-                <Plus className="size-4 mr-2" />
-                New Transfer
-              </Link>
-            </Button>
-          </div>
-        </div>
-      </div>
-
       <div className="container mx-auto px-6 py-8 max-w-7xl space-y-8">
         {/* Hero */}
-        <div>
-          <h2 className="text-xl font-semibold">Manage SitecoreAI content</h2>
-          <p className="text-sm text-muted-foreground mt-1">
-            Transfer content directly between environments, or use a local
-            backup package that you can restore later.
-          </p>
+        <div className="flex items-start justify-between gap-4">
+          <div className="flex items-start gap-3">
+            <ContentTransferMark className="size-9 shrink-0 rounded-[6.5px] ring-1 ring-black/10 dark:ring-white/15 mt-0.5" />
+            <div>
+              <h1 className="text-xl font-semibold">
+                Manage SitecoreAI content
+              </h1>
+              <p className="text-sm text-muted-foreground mt-1">
+                Transfer content directly between environments, or use a
+                local backup package that you can restore later.
+              </p>
+            </div>
+          </div>
+          <Button size="sm" asChild>
+            <Link href="/transfer/new">
+              <Plus className="size-4 mr-2" />
+              New Transfer
+            </Link>
+          </Button>
         </div>
 
         {/* Primary workflow: a live environment-to-environment transfer */}

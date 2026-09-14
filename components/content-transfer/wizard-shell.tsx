@@ -1,5 +1,6 @@
 "use client";
 
+import { ContentTransferMark } from "@/components/app-brand";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
@@ -50,11 +51,14 @@ export function WizardShell({
           </Link>
         </Button>
 
-        <div>
-          <h1 className="text-sm font-semibold leading-tight">{title}</h1>
-          <p className="text-xs text-muted-foreground mt-1 leading-snug">
-            {subtitle}
-          </p>
+        <div className="flex items-center gap-2">
+          <ContentTransferMark className="size-6 shrink-0 rounded-[1.3px] ring-1 ring-black/10 dark:ring-white/15" />
+          <div>
+            <h1 className="text-sm font-semibold leading-tight">{title}</h1>
+            <p className="text-xs text-muted-foreground mt-1 leading-snug">
+              {subtitle}
+            </p>
+          </div>
         </div>
 
         <Separator />

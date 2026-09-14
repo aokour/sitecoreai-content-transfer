@@ -85,65 +85,82 @@ function EnvironmentCardGrid({
         const wouldBecomeDestination = !selected && !!sourceId;
         const disabled = wouldBecomeDestination && !canBeDestination(env);
         const status = connectionStatuses?.[id];
+        const hint = isSource
+          ? "Click to clear as source"
+          : isDestination
+            ? "Click to clear as destination"
+            : disabled
+              ? "Local Docker environments can only be used as a source right now"
+              : wouldBecomeDestination
+                ? "Select this as destination"
+                : "Select this as source";
 
         return (
-          <Card
-            key={id}
-            role="button"
-            tabIndex={disabled ? -1 : 0}
-            aria-disabled={disabled}
-            onClick={disabled ? undefined : () => onSelect(id)}
-            onKeyDown={
-              disabled
-                ? undefined
-                : (e) => {
-                    if (e.key === "Enter" || e.key === " ") {
-                      e.preventDefault();
-                      onSelect(id);
-                    }
-                  }
-            }
-            className={`transition-colors ${
-              disabled
-                ? "cursor-not-allowed opacity-60"
-                : "cursor-pointer " +
-                  (isSource
-                    ? "border-primary ring-1 ring-primary"
-                    : isDestination
-                      ? "border-success-fg ring-1 ring-success-fg"
-                      : "hover:border-primary/50")
-            }`}
-          >
-            <CardContent className="p-4 space-y-2">
-              <div className="flex items-center gap-2 text-muted-foreground">
-                {env.kind === "local-docker" ? (
-                  <DockerIcon className="size-4 shrink-0" />
-                ) : (
-                  <Layers className="size-4 shrink-0" />
-                )}
-                <p className="text-sm font-medium text-foreground truncate">
-                  {getEnvironmentLabel(env)}
-                </p>
-                {status && <ConnectionStatusDot status={status} />}
-              </div>
-              <Badge
-                colorScheme={
-                  isSource ? "primary" : isDestination ? "success" : "neutral"
+          <Tooltip key={id}>
+            <TooltipTrigger asChild>
+              <Card
+                role="button"
+                tabIndex={disabled ? -1 : 0}
+                aria-disabled={disabled}
+                onClick={disabled ? undefined : () => onSelect(id)}
+                onKeyDown={
+                  disabled
+                    ? undefined
+                    : (e) => {
+                        if (e.key === "Enter" || e.key === " ") {
+                          e.preventDefault();
+                          onSelect(id);
+                        }
+                      }
                 }
-                size="sm"
+                className={`transition-colors ${
+                  disabled
+                    ? "cursor-not-allowed opacity-60"
+                    : "cursor-pointer " +
+                      (isSource
+                        ? "border-primary ring-1 ring-primary"
+                        : isDestination
+                          ? "border-success-fg ring-1 ring-success-fg"
+                          : "hover:border-primary/50")
+                }`}
               >
-                {isSource
-                  ? "Source"
-                  : isDestination
-                    ? "Destination"
-                    : disabled
-                      ? "Source only"
-                      : selected
-                        ? ""
-                        : "Select"}
-              </Badge>
-            </CardContent>
-          </Card>
+                <CardContent className="p-4 space-y-2">
+                  <div className="flex items-center gap-2 text-muted-foreground">
+                    {env.kind === "local-docker" ? (
+                      <DockerIcon className="size-4 shrink-0" />
+                    ) : (
+                      <Layers className="size-4 shrink-0" />
+                    )}
+                    <p className="text-sm font-medium text-foreground truncate">
+                      {getEnvironmentLabel(env)}
+                    </p>
+                    {status && <ConnectionStatusDot status={status} />}
+                  </div>
+                  <Badge
+                    colorScheme={
+                      isSource
+                        ? "primary"
+                        : isDestination
+                          ? "success"
+                          : "neutral"
+                    }
+                    size="sm"
+                  >
+                    {isSource
+                      ? "Source"
+                      : isDestination
+                        ? "Destination"
+                        : disabled
+                          ? "Source only"
+                          : selected
+                            ? ""
+                            : "Select"}
+                  </Badge>
+                </CardContent>
+              </Card>
+            </TooltipTrigger>
+            <TooltipContent className="max-w-56">{hint}</TooltipContent>
+          </Tooltip>
         );
       })}
     </div>

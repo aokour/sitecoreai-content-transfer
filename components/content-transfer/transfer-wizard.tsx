@@ -1,5 +1,6 @@
 "use client";
 
+import { ContentTransferMark } from "@/components/app-brand";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -156,13 +157,16 @@ export function TransferWizard({
         </Button>
 
         {/* Page title */}
-        <div>
-          <h1 className="text-sm font-semibold leading-tight">
-            New Content Transfer
-          </h1>
-          <p className="text-xs text-muted-foreground mt-1 leading-snug">
-            Configure and start a content transfer between environments
-          </p>
+        <div className="flex items-center gap-2">
+          <ContentTransferMark className="size-6 shrink-0 rounded-[1.3px] ring-1 ring-black/10 dark:ring-white/15" />
+          <div>
+            <h1 className="text-sm font-semibold leading-tight">
+              New Content Transfer
+            </h1>
+            <p className="text-xs text-muted-foreground mt-1 leading-snug">
+              Configure and start a content transfer between environments
+            </p>
+          </div>
         </div>
 
         <Separator />
