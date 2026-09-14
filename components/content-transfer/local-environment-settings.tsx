@@ -233,6 +233,7 @@ export function LocalEnvironmentSettings({
   const tokenExpiry = form.token ? decodeJwtExpiry(form.token) : null;
 
   return (
+    <>
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-lg">
         <DialogHeader>
@@ -248,7 +249,7 @@ export function LocalEnvironmentSettings({
             : "Currently usable as a transfer/backup source only. Using a local Docker environment as a destination needs additional Azure Blob Storage configuration on the container."}
         </p>
 
-        <div className="space-y-4">
+        <div className="min-w-0 space-y-4">
           {environments.length > 0 && (
             <div className="space-y-2">
               {environments.map((env) => (
@@ -430,64 +431,19 @@ export function LocalEnvironmentSettings({
             )}
           </div>
 
-          <div className="space-y-2">
-            <div className="flex items-center justify-between gap-2">
-              <p className="text-xs text-muted-foreground">
-                Needs CORS enabled on your local container for this
-                app&apos;s origin.
-              </p>
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                onClick={() => setCorsHelpOpen((o) => !o)}
-              >
-                CORS setup instructions
-              </Button>
-            </div>
-
-            {corsHelpOpen && (
-              <div className="space-y-3 rounded-md border bg-muted/20 p-3 text-xs">
-                <div className="space-y-1.5">
-                  <p className="font-medium text-foreground">
-                    1. In your Sitecore host repo, edit{" "}
-                    <code className="rounded bg-muted px-1 py-0.5">
-                      local-containers/.env
-                    </code>
-                  </p>
-                  <p className="text-muted-foreground">
-                    Update{" "}
-                    <code className="rounded bg-muted px-1 py-0.5">
-                      SITECORE_GRAPHQL_CORS
-                    </code>{" "}
-                    to include this app&apos;s origin (keep your existing
-                    entries, just append this one):
-                  </p>
-                  <CodeSnippet value="SITECORE_GRAPHQL_CORS=*.sitecorecloud.io;*saicontent-transfer.vercel.app" />
-                  <p className="text-muted-foreground">
-                    Add a new variable:
-                  </p>
-                  <CodeSnippet value="SITECORE_CONTENTTRANSFER_CORS_ORIGINS=https://saicontent-transfer.vercel.app" />
-                </div>
-
-                <div className="space-y-1.5">
-                  <p className="font-medium text-foreground">
-                    2. In{" "}
-                    <code className="rounded bg-muted px-1 py-0.5">
-                      local-containers/docker-compose.override.yml
-                    </code>
-                    , under the{" "}
-                    <code className="rounded bg-muted px-1 py-0.5">cm</code>{" "}
-                    service&apos;s environment section, add:
-                  </p>
-                  <CodeSnippet value="SITECORE_CONTENTTRANSFER_CORS_ORIGINS: ${SITECORE_CONTENTTRANSFER_CORS_ORIGINS}" />
-                </div>
-
-                <p className="text-muted-foreground">
-                  Restart your containers for the change to take effect.
-                </p>
-              </div>
-            )}
+          <div className="flex items-center justify-between gap-2">
+            <p className="text-xs text-muted-foreground">
+              Needs CORS enabled on your local container for this app&apos;s
+              origin.
+            </p>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => setCorsHelpOpen(true)}
+            >
+              CORS setup instructions
+            </Button>
           </div>
 
           <Alert>
@@ -510,5 +466,53 @@ export function LocalEnvironmentSettings({
         </DialogFooter>
       </DialogContent>
     </Dialog>
+
+    <Dialog open={corsHelpOpen} onOpenChange={setCorsHelpOpen}>
+      <DialogContent size="lg">
+        <DialogHeader>
+          <DialogTitle>CORS setup instructions</DialogTitle>
+        </DialogHeader>
+
+        <div className="min-w-0 space-y-3 text-xs">
+          <div className="space-y-1.5">
+            <p className="font-medium text-foreground">
+              1. In your Sitecore host repo, edit{" "}
+              <code className="break-all rounded bg-muted px-1 py-0.5">
+                local-containers/.env
+              </code>
+            </p>
+            <p className="text-muted-foreground">
+              Update{" "}
+              <code className="rounded bg-muted px-1 py-0.5">
+                SITECORE_GRAPHQL_CORS
+              </code>{" "}
+              to include this app&apos;s origin (keep your existing entries,
+              just append this one):
+            </p>
+            <CodeSnippet value="SITECORE_GRAPHQL_CORS=*.sitecorecloud.io;*saicontent-transfer.vercel.app" />
+            <p className="text-muted-foreground">Add a new variable:</p>
+            <CodeSnippet value="SITECORE_CONTENTTRANSFER_CORS_ORIGINS=https://saicontent-transfer.vercel.app" />
+          </div>
+
+          <div className="space-y-1.5">
+            <p className="font-medium text-foreground">
+              2. In{" "}
+              <code className="break-all rounded bg-muted px-1 py-0.5">
+                local-containers/docker-compose.override.yml
+              </code>
+              , under the{" "}
+              <code className="rounded bg-muted px-1 py-0.5">cm</code>{" "}
+              service&apos;s environment section, add:
+            </p>
+            <CodeSnippet value="SITECORE_CONTENTTRANSFER_CORS_ORIGINS: ${SITECORE_CONTENTTRANSFER_CORS_ORIGINS}" />
+          </div>
+
+          <p className="text-muted-foreground">
+            Restart your containers for the change to take effect.
+          </p>
+        </div>
+      </DialogContent>
+    </Dialog>
+    </>
   );
 }
