@@ -13,7 +13,9 @@ import { Label } from "@/components/ui/label";
 import {
   Select,
   SelectContent,
+  SelectGroup,
   SelectItem,
+  SelectLabel,
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
@@ -33,13 +35,22 @@ import {
 import {
   MERGE_STRATEGY_OPTIONS,
   SCOPE_OPTIONS,
+  canBeDestination,
+  getEnvironmentId,
   getEnvironmentLabel,
+  getEnvironmentTenantId,
 } from "@/lib/content-transfer";
 import { ArrowLeft, ArrowRight, RotateCcw, Upload, Play } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useRef, useState } from "react";
+import { AddLocalEnvironmentButton } from "./add-local-environment-button";
+import { DockerIcon } from "./docker-icon";
+import { EnvironmentOptionLabel } from "./environment-badge";
 import { RestorePreview } from "./restore-preview";
-import { TransferProgressDisplay, type ProgressStep } from "./transfer-progress";
+import {
+  TransferProgressDisplay,
+  type ProgressStep,
+} from "./transfer-progress";
 import { WizardEnvironmentPanel, WizardShell } from "./wizard-shell";
 
 const STEPS = [
@@ -81,7 +92,11 @@ export function RestoreWizard() {
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const environments = useEnvironments();
-  const destEnv = environments.find((e) => e.context.preview === destinationId);
+  const marketplaceEnvs = environments.filter((e) => e.kind === "marketplace");
+  const dockerEnvs = environments.filter((e) => e.kind === "local-docker");
+  const destEnv = environments.find(
+    (e) => getEnvironmentId(e) === destinationId,
+  );
   const destName = destEnv ? getEnvironmentLabel(destEnv) : "the destination";
 
   const dataTrees = manifest ? manifestDataTrees(manifest) : [];
@@ -93,7 +108,7 @@ export function RestoreWizard() {
   const restoringIntoSource =
     !!manifest?.sourceTenantId &&
     !!destEnv &&
-    manifest.sourceTenantId === destEnv.tenantId;
+    manifest.sourceTenantId === getEnvironmentTenantId(destEnv);
 
   async function acceptFile(picked: File) {
     setFile(picked);
@@ -136,7 +151,11 @@ export function RestoreWizard() {
   const wizardSteps = STEPS.map((step, i) => {
     if (i !== STEPS.length - 1) return step;
     if (phase === "completed") {
-      return { ...step, status: "completed" as const, description: "Completed" };
+      return {
+        ...step,
+        status: "completed" as const,
+        description: "Completed",
+      };
     }
     if (phase === "failed") return { ...step, description: "Failed" };
     return step;
@@ -217,18 +236,19 @@ export function RestoreWizard() {
             </Button>
           )}
 
-          {currentStep === 4 && (phase === "completed" || phase === "failed") && (
-            <Button
-              className="w-full"
-              onClick={() => {
-                router.push("/restore/new");
-                window.location.reload();
-              }}
-            >
-              <RotateCcw className="size-4 mr-2" />
-              New Restore
-            </Button>
-          )}
+          {currentStep === 4 &&
+            (phase === "completed" || phase === "failed") && (
+              <Button
+                className="w-full"
+                onClick={() => {
+                  router.push("/restore/new");
+                  window.location.reload();
+                }}
+              >
+                <RotateCcw className="size-4 mr-2" />
+                New Restore
+              </Button>
+            )}
         </>
       }
     >
@@ -444,26 +464,48 @@ export function RestoreWizard() {
                   <SelectValue placeholder="Select environment..." />
                 </SelectTrigger>
                 <SelectContent>
-                  {environments.map((env) => (
-                    <SelectItem
-                      key={env.context.preview}
-                      value={env.context.preview}
-                    >
-                      <div className="flex items-center gap-2">
-                        <span>{getEnvironmentLabel(env)}</span>
-                        <Badge colorScheme="neutral" size="sm">
-                          {env.tenantId.slice(0, 6)}
-                        </Badge>
-                      </div>
-                    </SelectItem>
-                  ))}
+                  {marketplaceEnvs.map((env) => {
+                    const id = getEnvironmentId(env);
+                    return (
+                      <SelectItem key={id} value={id}>
+                        <EnvironmentOptionLabel env={env} />
+                      </SelectItem>
+                    );
+                  })}
+                  {dockerEnvs.length > 0 && (
+                    <SelectGroup>
+                      <SelectLabel className="flex items-center gap-1.5">
+                        <DockerIcon className="size-3.5 shrink-0" />
+                        Local Docker
+                      </SelectLabel>
+                      {dockerEnvs.map((env) => {
+                        const id = getEnvironmentId(env);
+                        const selectable = canBeDestination(env);
+                        return (
+                          <SelectItem
+                            key={id}
+                            value={id}
+                            disabled={!selectable}
+                          >
+                            <EnvironmentOptionLabel
+                              env={env}
+                              disabledAsDestination={!selectable}
+                            />
+                          </SelectItem>
+                        );
+                      })}
+                    </SelectGroup>
+                  )}
                 </SelectContent>
               </Select>
               {destEnv && (
                 <p className="text-xs text-muted-foreground truncate">
-                  Context: {destEnv.context.preview}
+                  {destEnv.kind === "marketplace"
+                    ? `Context: ${destEnv.context.preview}`
+                    : destEnv.baseUrl}
                 </p>
               )}
+              <AddLocalEnvironmentButton />
             </div>
 
             {restoringIntoSource && (
@@ -549,10 +591,10 @@ export function RestoreWizard() {
                 <Separator />
                 <Alert variant="success">
                   <AlertDescription>
-                    Restore complete. The imported package remains on{" "}
-                    {destName} as a retained source file — Sitecore keeps it for
-                    import history and it cannot be removed through the
-                    Marketplace SDK.
+                    Restore complete. The imported package remains on {destName}{" "}
+                    as a retained source file — Sitecore keeps it for import
+                    history and it cannot be removed through the Marketplace
+                    SDK.
                   </AlertDescription>
                 </Alert>
               </>

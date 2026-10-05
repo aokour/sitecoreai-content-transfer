@@ -18,14 +18,16 @@ import type {
   DataTreeItem,
   TransferPhase,
 } from "@/lib/content-transfer";
-import { isMediaPath } from "@/lib/content-transfer";
+import { findEnvironmentById, isMediaPath } from "@/lib/content-transfer";
 import {
   createLogger,
   deleteTransferQuietly,
   getChunkWithRetry,
   pollTransferStatus,
 } from "@/lib/content-transfer-primitives";
+import { resolveEnvironmentClient } from "@/lib/environment-client/resolve";
 import { useCallback, useRef, useState } from "react";
+import { useEnvironments } from "./use-environments";
 
 const { log, logError, logWarn } = createLogger("[ContentBackup]");
 const logger = { log, logWarn, logError };
@@ -49,6 +51,7 @@ interface SubBackup {
 
 export function useContentBackup() {
   const client = useMarketplaceClient();
+  const environments = useEnvironments();
   const [phase, setPhase] = useState<TransferPhase>("idle");
   const [progress, setProgress] = useState(0);
   const [error, setError] = useState<string | null>(null);
@@ -130,6 +133,18 @@ export function useContentBackup() {
       const createdOnSource: SubBackup[] = [];
       let archive: Awaited<ReturnType<typeof createArchiveWriter>> | null = null;
 
+      const sourceEnv = findEnvironmentById(environments, config.sourceContextId);
+      if (!sourceEnv) {
+        setPhase("failed");
+        setError("Could not resolve the selected source environment.");
+        isRunningRef.current = false;
+        return;
+      }
+      const sourceTransport = resolveEnvironmentClient(
+        sourceEnv,
+        client,
+      ).contentTransfer;
+
       try {
         // The save dialog must be opened from the user's click, so the archive
         // is created before any network work begins.
@@ -169,30 +184,7 @@ export function useContentBackup() {
             isMedia,
           });
 
-          const createRes = await client.mutate(
-            "xmc.contentTransfer.createContentTransfer",
-            {
-              params: {
-                body: {
-                  transferId,
-                  configuration: { dataTrees },
-                },
-                query: { sitecoreContextId: config.sourceContextId },
-              },
-            },
-          );
-          const createResAny = createRes as unknown as { error?: unknown };
-          log(`Step1${label}`, `createContentTransfer response`, createResAny);
-          if (createResAny.error) {
-            logError(
-              `Step1${label}`,
-              "createContentTransfer failed",
-              createResAny.error,
-            );
-            throw new Error(
-              `createContentTransfer failed: ${JSON.stringify(createResAny.error)}`,
-            );
-          }
+          await sourceTransport.createContentTransfer(transferId, dataTrees);
           createdOnSource.push(sub);
           log(`Step1${label}`, `✓ Transfer created on source`);
 
@@ -203,9 +195,8 @@ export function useContentBackup() {
           setProgress(progressOffset + Math.round(progressShare * 0.1));
           setDetail("Waiting for the source to package content…");
 
-          const chunkSets = await pollTransferStatus(client, {
+          const chunkSets = await pollTransferStatus(sourceTransport, {
             transferId,
-            sourceContextId: config.sourceContextId,
             shouldAbort,
             logger,
             onChunkSets: (sets) =>
@@ -242,11 +233,10 @@ export function useContentBackup() {
                 }`,
               );
 
-              const chunkBlob = await getChunkWithRetry(client, {
+              const chunkBlob = await getChunkWithRetry(sourceTransport, {
                 transferId,
                 chunksetId: chunkSet.ChunkSetId,
                 chunkId: chunkIndex,
-                sourceContextId: config.sourceContextId,
                 label,
                 logNote: `${chunkIndex + 1}/${chunkSet.ChunkCount}`,
                 shouldAbort,
@@ -320,9 +310,8 @@ export function useContentBackup() {
         // Documented as a source-environment operation. A backup can stage
         // gigabytes, so this runs on success, failure and abort alike.
         for (const sub of createdOnSource) {
-          await deleteTransferQuietly(client, {
+          await deleteTransferQuietly(sourceTransport, {
             transferId: sub.transferId,
-            contextId: config.sourceContextId,
             side: "source",
             label: sub.label,
             logger,
@@ -338,9 +327,8 @@ export function useContentBackup() {
         // Discard the partial archive, then release the source either way.
         if (archive) await archive.abort().catch(() => {});
         for (const sub of createdOnSource) {
-          await deleteTransferQuietly(client, {
+          await deleteTransferQuietly(sourceTransport, {
             transferId: sub.transferId,
-            contextId: config.sourceContextId,
             side: "source",
             label: sub.label,
             logger,
@@ -363,7 +351,7 @@ export function useContentBackup() {
         isRunningRef.current = false;
       }
     },
-    [client, readAuthor],
+    [client, environments, readAuthor],
   );
 
   const reset = useCallback(() => {

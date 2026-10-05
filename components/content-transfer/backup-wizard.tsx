@@ -13,7 +13,9 @@ import { Label } from "@/components/ui/label";
 import {
   Select,
   SelectContent,
+  SelectGroup,
   SelectItem,
+  SelectLabel,
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
@@ -28,13 +30,21 @@ import type { DataTreeItem } from "@/lib/content-transfer";
 import {
   MERGE_STRATEGY_OPTIONS,
   SCOPE_OPTIONS,
+  getEnvironmentId,
   getEnvironmentLabel,
+  getEnvironmentTenantId,
 } from "@/lib/content-transfer";
 import { ArrowLeft, ArrowRight, Download, RotateCcw } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useMemo, useState } from "react";
+import { AddLocalEnvironmentButton } from "./add-local-environment-button";
+import { DockerIcon } from "./docker-icon";
+import { EnvironmentOptionLabel } from "./environment-badge";
 import { InlineItemSelector } from "./inline-item-selector";
-import { TransferProgressDisplay, type ProgressStep } from "./transfer-progress";
+import {
+  TransferProgressDisplay,
+  type ProgressStep,
+} from "./transfer-progress";
 import { WizardEnvironmentPanel, WizardShell } from "./wizard-shell";
 
 const STEPS = [
@@ -77,7 +87,9 @@ export function BackupWizard({ initialSourceId }: BackupWizardProps) {
   const [dataTrees, setDataTrees] = useState<DataTreeItem[]>([]);
 
   const environments = useEnvironments();
-  const sourceEnv = environments.find((e) => e.context.preview === sourceId);
+  const marketplaceEnvs = environments.filter((e) => e.kind === "marketplace");
+  const dockerEnvs = environments.filter((e) => e.kind === "local-docker");
+  const sourceEnv = environments.find((e) => getEnvironmentId(e) === sourceId);
 
   const previewFileName = useMemo(
     () => archiveFileName(label.trim() || "Content Backup", new Date()),
@@ -106,7 +118,7 @@ export function BackupWizard({ initialSourceId }: BackupWizardProps) {
     await startBackup({
       label: label.trim() || "Content Backup",
       sourceContextId: sourceId,
-      sourceTenantId: sourceEnv.tenantId,
+      sourceTenantId: getEnvironmentTenantId(sourceEnv),
       sourceTenantName: getEnvironmentLabel(sourceEnv),
       dataTrees,
     });
@@ -169,29 +181,32 @@ export function BackupWizard({ initialSourceId }: BackupWizardProps) {
             </Button>
           )}
 
-          {currentStep === 3 && phase === "completed" && delivery?.redeliver && (
-            <Button
-              variant="outline"
-              className="w-full"
-              onClick={delivery.redeliver}
-            >
-              <Download className="size-4 mr-2" />
-              Save again
-            </Button>
-          )}
+          {currentStep === 3 &&
+            phase === "completed" &&
+            delivery?.redeliver && (
+              <Button
+                variant="outline"
+                className="w-full"
+                onClick={delivery.redeliver}
+              >
+                <Download className="size-4 mr-2" />
+                Save again
+              </Button>
+            )}
 
-          {currentStep === 3 && (phase === "completed" || phase === "failed") && (
-            <Button
-              className="w-full"
-              onClick={() => {
-                router.push("/backup/new");
-                window.location.reload();
-              }}
-            >
-              <RotateCcw className="size-4 mr-2" />
-              New Backup
-            </Button>
-          )}
+          {currentStep === 3 &&
+            (phase === "completed" || phase === "failed") && (
+              <Button
+                className="w-full"
+                onClick={() => {
+                  router.push("/backup/new");
+                  window.location.reload();
+                }}
+              >
+                <RotateCcw className="size-4 mr-2" />
+                New Backup
+              </Button>
+            )}
         </>
       }
     >
@@ -217,24 +232,37 @@ export function BackupWizard({ initialSourceId }: BackupWizardProps) {
                   <SelectValue placeholder="Select environment..." />
                 </SelectTrigger>
                 <SelectContent>
-                  {environments.map((env) => (
-                    <SelectItem
-                      key={env.context.preview}
-                      value={env.context.preview}
-                    >
-                      <div className="flex items-center gap-2">
-                        <span>{getEnvironmentLabel(env)}</span>
-                        <Badge colorScheme="neutral" size="sm">
-                          {env.tenantId.slice(0, 6)}
-                        </Badge>
-                      </div>
-                    </SelectItem>
-                  ))}
+                  {marketplaceEnvs.map((env) => {
+                    const id = getEnvironmentId(env);
+                    return (
+                      <SelectItem key={id} value={id}>
+                        <EnvironmentOptionLabel env={env} />
+                      </SelectItem>
+                    );
+                  })}
+                  {dockerEnvs.length > 0 && (
+                    <SelectGroup>
+                      <SelectLabel className="flex items-center gap-1.5">
+                        <DockerIcon className="size-3.5 shrink-0" />
+                        Local Docker
+                      </SelectLabel>
+                      {dockerEnvs.map((env) => {
+                        const id = getEnvironmentId(env);
+                        return (
+                          <SelectItem key={id} value={id}>
+                            <EnvironmentOptionLabel env={env} />
+                          </SelectItem>
+                        );
+                      })}
+                    </SelectGroup>
+                  )}
                 </SelectContent>
               </Select>
               {sourceEnv && (
                 <p className="text-xs text-muted-foreground truncate">
-                  Context: {sourceEnv.context.preview}
+                  {sourceEnv.kind === "marketplace"
+                    ? `Context: ${sourceEnv.context.preview}`
+                    : sourceEnv.baseUrl}
                 </p>
               )}
             </div>
@@ -247,6 +275,7 @@ export function BackupWizard({ initialSourceId }: BackupWizardProps) {
                 </AlertDescription>
               </Alert>
             )}
+            <AddLocalEnvironmentButton />
           </CardContent>
         </>
       )}
@@ -259,7 +288,9 @@ export function BackupWizard({ initialSourceId }: BackupWizardProps) {
             onChange={setDataTrees}
             sourceContextId={sourceId}
             destinationContextId={null}
-            sourceEnvName={sourceEnv ? getEnvironmentLabel(sourceEnv) : undefined}
+            sourceEnvName={
+              sourceEnv ? getEnvironmentLabel(sourceEnv) : undefined
+            }
             label={label}
             onLabelChange={setLabel}
             mode="backup"

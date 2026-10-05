@@ -1,7 +1,10 @@
 "use client";
 
 import { useMarketplaceClient } from "@/components/providers/marketplace";
+import { findEnvironmentById } from "@/lib/content-transfer";
+import { resolveEnvironmentClient } from "@/lib/environment-client/resolve";
 import { useCallback, useEffect, useState } from "react";
+import { useEnvironments } from "./use-environments";
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -66,13 +69,24 @@ export function useItemFields(
   sourceContextId: string | null,
   destinationContextId: string | null
 ) {
-  const client = useMarketplaceClient();
+  const sdkClient = useMarketplaceClient();
+  const environments = useEnvironments();
   const [fields, setFields] = useState<FieldComparison[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const fetchFields = useCallback(async () => {
     if (!path || !sourceContextId) {
+      setFields([]);
+      return;
+    }
+
+    const sourceEnv = findEnvironmentById(environments, sourceContextId);
+    const destinationEnv = findEnvironmentById(
+      environments,
+      destinationContextId,
+    );
+    if (!sourceEnv) {
       setFields([]);
       return;
     }
@@ -85,29 +99,20 @@ export function useItemFields(
       const variables = { path, language: "en" };
 
       const [srcRes, dstRes] = await Promise.all([
-        client.mutate("xmc.authoring.graphql", {
-          params: {
-            body: { query: GET_ITEM_FIELDS, variables },
-            query: { sitecoreContextId: sourceContextId },
-          },
-        }),
-        destinationContextId
-          ? client.mutate("xmc.authoring.graphql", {
-              params: {
-                body: { query: GET_ITEM_FIELDS, variables },
-                query: { sitecoreContextId: destinationContextId },
-              },
-            })
+        resolveEnvironmentClient(sourceEnv, sdkClient).graphql<GraphQLFieldResponse>(
+          GET_ITEM_FIELDS,
+          variables,
+        ),
+        destinationEnv
+          ? resolveEnvironmentClient(destinationEnv, sdkClient).graphql<GraphQLFieldResponse>(
+              GET_ITEM_FIELDS,
+              variables,
+            )
           : Promise.resolve(null),
       ]);
 
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const srcData = (srcRes?.data as any)?.data as GraphQLFieldResponse | undefined;
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const dstData = (dstRes?.data as any)?.data as GraphQLFieldResponse | undefined;
-
-      const srcFields: RawField[] = srcData?.item?.fields?.nodes ?? [];
-      const dstFields: RawField[] = dstData?.item?.fields?.nodes ?? [];
+      const srcFields: RawField[] = srcRes.data?.item?.fields?.nodes ?? [];
+      const dstFields: RawField[] = dstRes?.data?.item?.fields?.nodes ?? [];
 
       // Merge by field name
       const byName = new Map<string, FieldComparison>();
@@ -155,7 +160,7 @@ export function useItemFields(
     } finally {
       setIsLoading(false);
     }
-  }, [path, sourceContextId, destinationContextId, client]);
+  }, [path, sourceContextId, destinationContextId, sdkClient, environments]);
 
   // Re-fetch whenever the selected item path changes
   useEffect(() => {

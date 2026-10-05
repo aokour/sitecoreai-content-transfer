@@ -1,8 +1,10 @@
 "use client";
 
 import { useMarketplaceClient } from "@/components/providers/marketplace";
-import type { DataTreeItem } from "@/lib/content-transfer";
+import { findEnvironmentById, type DataTreeItem } from "@/lib/content-transfer";
+import { resolveEnvironmentClient } from "@/lib/environment-client/resolve";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useEnvironments } from "./use-environments";
 
 // The archive payload is opaque — content chunks are encrypted and no endpoint
 // enumerates a package's contents. So the preview is built entirely from what
@@ -75,32 +77,29 @@ const GET_PATH_PREVIEW = /* GraphQL */ `
   }
 `;
 
-interface PreviewEnvelope {
-  data?: {
-    item?: {
-      itemId: string;
-      name: string;
-      path: string;
-      template?: { name: string } | null;
-      updated?: { value: string } | null;
-      updatedBy?: { value: string } | null;
-      children?: {
-        pageInfo?: { hasNextPage: boolean };
-        nodes: (
-          | {
-              itemId: string;
-              name: string;
-              path: string;
-              hasChildren: boolean;
-              template?: { name: string } | null;
-              updated?: { value: string } | null;
-            }
-          | null
-        )[];
-      } | null;
+interface PreviewItemData {
+  item?: {
+    itemId: string;
+    name: string;
+    path: string;
+    template?: { name: string } | null;
+    updated?: { value: string } | null;
+    updatedBy?: { value: string } | null;
+    children?: {
+      pageInfo?: { hasNextPage: boolean };
+      nodes: (
+        | {
+            itemId: string;
+            name: string;
+            path: string;
+            hasChildren: boolean;
+            template?: { name: string } | null;
+            updated?: { value: string } | null;
+          }
+        | null
+      )[];
     } | null;
-  };
-  errors?: Array<{ message?: string }>;
+  } | null;
 }
 
 function errorMessage(err: unknown): string {
@@ -122,7 +121,8 @@ export function useRestorePreview(
   dataTrees: DataTreeItem[],
   destinationContextId: string | null,
 ) {
-  const client = useMarketplaceClient();
+  const sdkClient = useMarketplaceClient();
+  const environments = useEnvironments();
   const [previews, setPreviews] = useState<Record<string, PathPreview>>({});
   const [isLoading, setIsLoading] = useState(false);
   // Guards against a slow response for a previously-selected destination
@@ -137,6 +137,15 @@ export function useRestorePreview(
       setPreviews({});
       return;
     }
+    const destinationEnv = findEnvironmentById(
+      environments,
+      destinationContextId,
+    );
+    if (!destinationEnv) {
+      setPreviews({});
+      return;
+    }
+    const envClient = resolveEnvironmentClient(destinationEnv, sdkClient);
     const runId = ++runIdRef.current;
     setIsLoading(true);
     setPreviews(
@@ -151,30 +160,10 @@ export function useRestorePreview(
     const results = await Promise.all(
       paths.map(async (path): Promise<PathPreview> => {
         try {
-          const res = await client.mutate("xmc.authoring.graphql", {
-            params: {
-              body: {
-                query: GET_PATH_PREVIEW,
-                variables: {
-                  path,
-                  systemLocale: "en",
-                  first: CHILD_PAGE_SIZE,
-                },
-              },
-              query: { sitecoreContextId: destinationContextId },
-            },
-          });
-          const resAny = res as unknown as { data?: unknown; error?: unknown };
-          if (resAny.error || !resAny.data) {
-            return {
-              path,
-              status: "error",
-              error: errorMessage(resAny.error),
-              children: [],
-              childrenTruncated: false,
-            };
-          }
-          const envelope = resAny.data as PreviewEnvelope;
+          const envelope = await envClient.graphql<PreviewItemData>(
+            GET_PATH_PREVIEW,
+            { path, systemLocale: "en", first: CHILD_PAGE_SIZE },
+          );
           const item = envelope.data?.item;
           if (!item) {
             // A null item with no errors means the path simply is not there,
@@ -231,7 +220,7 @@ export function useRestorePreview(
     setPreviews(Object.fromEntries(results.map((r) => [r.path, r])));
     setIsLoading(false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [client, destinationContextId, pathKey]);
+  }, [sdkClient, environments, destinationContextId, pathKey]);
 
   useEffect(() => {
     load();
