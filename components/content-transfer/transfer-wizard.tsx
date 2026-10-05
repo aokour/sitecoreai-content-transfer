@@ -39,6 +39,46 @@ const STEPS = [
   { label: "Progress", description: "Live transfer status" },
 ];
 
+/** Selected item paths with their scope and merge strategy. */
+function TransferItemsSummary({ items }: { items: DataTreeItem[] }) {
+  return (
+    <div className="rounded-lg border p-4 space-y-3">
+      <div className="flex items-center justify-between">
+        <h4 className="text-sm font-medium">Content Items</h4>
+        <Badge colorScheme="neutral" size="sm">
+          {items.length} item{items.length !== 1 ? "s" : ""}
+        </Badge>
+      </div>
+      <div className="space-y-2">
+        {items.map((item) => {
+          const scopeLabel =
+            SCOPE_OPTIONS.find((s) => s.value === item.scope)?.label ??
+            item.scope;
+          const strategyLabel =
+            MERGE_STRATEGY_OPTIONS.find((s) => s.value === item.mergeStrategy)
+              ?.label ?? item.mergeStrategy;
+          return (
+            <div
+              key={item.itemPath}
+              className="flex flex-wrap items-center gap-2 text-sm"
+            >
+              <code className="text-xs bg-muted px-1.5 py-0.5 rounded font-mono">
+                {item.itemPath}
+              </code>
+              <Badge colorScheme="primary" size="sm">
+                {scopeLabel}
+              </Badge>
+              <Badge colorScheme="neutral" size="sm">
+                {strategyLabel}
+              </Badge>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 interface TransferWizardProps {
   initialSourceId?: string | null;
   initialDestinationId?: string | null;
@@ -380,41 +420,7 @@ export function TransferWizard({
                 )}
 
                 {/* Items */}
-                <div className="rounded-lg border p-4 space-y-3">
-                  <div className="flex items-center justify-between">
-                    <h4 className="text-sm font-medium">Content Items</h4>
-                    <Badge colorScheme="neutral" size="sm">
-                      {dataTrees.length} item{dataTrees.length !== 1 ? "s" : ""}
-                    </Badge>
-                  </div>
-                  <div className="space-y-2">
-                    {dataTrees.map((item, i) => {
-                      const scopeLabel =
-                        SCOPE_OPTIONS.find((s) => s.value === item.scope)
-                          ?.label ?? item.scope;
-                      const strategyLabel =
-                        MERGE_STRATEGY_OPTIONS.find(
-                          (s) => s.value === item.mergeStrategy,
-                        )?.label ?? item.mergeStrategy;
-                      return (
-                        <div
-                          key={i}
-                          className="flex flex-wrap items-center gap-2 text-sm"
-                        >
-                          <code className="text-xs bg-muted px-1.5 py-0.5 rounded font-mono">
-                            {item.itemPath}
-                          </code>
-                          <Badge colorScheme="primary" size="sm">
-                            {scopeLabel}
-                          </Badge>
-                          <Badge colorScheme="neutral" size="sm">
-                            {strategyLabel}
-                          </Badge>
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
+                <TransferItemsSummary items={dataTrees} />
               </CardContent>
             </>
           )}
@@ -429,7 +435,7 @@ export function TransferWizard({
                   while the transfer is running.
                 </CardDescription>
               </CardHeader>
-              <CardContent>
+              <CardContent className="space-y-6">
                 <TransferProgressDisplay
                   phase={phase}
                   progress={progress}
@@ -437,6 +443,17 @@ export function TransferWizard({
                   chunkSetsMetadata={chunkSetsMetadata}
                   transferId={transferId}
                 />
+
+                {/* Label */}
+                {label && (
+                  <div className="rounded-lg border p-4">
+                    <h4 className="text-sm font-medium mb-1">Label</h4>
+                    <p className="text-sm text-muted-foreground">{label}</p>
+                  </div>
+                )}
+
+                {/* Items */}
+                <TransferItemsSummary items={dataTrees} />
               </CardContent>
             </>
           )}
