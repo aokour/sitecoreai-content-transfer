@@ -18,6 +18,7 @@ import {
   getEnvironmentLabel,
   type EnvironmentEntry,
 } from "@/lib/content-transfer";
+import { LOCAL_DOCKER_ENABLED } from "@/lib/feature-flags";
 import {
   ArrowRight,
   CheckCircle2,
@@ -183,8 +184,10 @@ export function EnvironmentQuickLaunch() {
         <Alert variant="warning">
           <AlertDescription>
             No environments found in application context. Ensure this app has
-            been granted access to SitecoreAI environments when you installed
-            it, or add a local Docker environment below.
+            been granted access to SitecoreAI environments when you installed it
+            {LOCAL_DOCKER_ENABLED &&
+              ", or add a local Docker environment below"}
+            .
           </AlertDescription>
         </Alert>
         <AddLocalEnvironmentButton />

@@ -5,6 +5,7 @@ import type {
   EnvironmentEntry,
   ResourceAccessEntry,
 } from "@/lib/content-transfer";
+import { LOCAL_DOCKER_ENABLED } from "@/lib/feature-flags";
 import { useMemo } from "react";
 import { useLocalDockerEnvironments } from "./use-local-docker-environments";
 
@@ -24,6 +25,9 @@ export function useEnvironments(): EnvironmentEntry[] {
     const marketplaceEnvironments: EnvironmentEntry[] = (
       raw as ResourceAccessEntry[]
     ).map((e) => ({ ...e, kind: "marketplace" as const }));
+    // Previously saved Docker entries stay in localStorage but are hidden
+    // while the feature is disabled.
+    if (!LOCAL_DOCKER_ENABLED) return marketplaceEnvironments;
     return [...marketplaceEnvironments, ...dockerEnvironments];
   }, [appContext, dockerEnvironments]);
 }

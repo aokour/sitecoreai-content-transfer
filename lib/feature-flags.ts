@@ -3,12 +3,15 @@
 // at runtime — flipping one requires a rebuild/restart of the dev server.
 
 /**
- * Allows a local Docker environment to be selected as a transfer/restore
- * *destination*. Off by default: the Content Transfer API's chunk-staging
- * pipeline requires a valid Azure Blob Storage connection string configured
- * on the destination container, which most local Docker setups won't have —
- * set this in your own .env.local (or the deployment's env vars) once
- * that's configured, to re-enable it for your own testing.
+ * Enables local Docker SitecoreAI environments everywhere — registering them,
+ * and using them as a transfer/backup/restore source or destination. Off by
+ * default: this capability is available on request from Americaneagle.com
+ * (see LOCAL_DOCKER_CONTACT_URL). Note that using one as a *destination* also
+ * needs a valid Azure Blob Storage connection string configured on that
+ * container, since the Content Transfer API's chunk-staging pipeline uses it.
  */
-export const ALLOW_LOCAL_DOCKER_DESTINATION =
-  process.env.NEXT_PUBLIC_ALLOW_LOCAL_DOCKER_DESTINATION === "true";
+export const LOCAL_DOCKER_ENABLED =
+  process.env.NEXT_PUBLIC_ENABLE_LOCAL_DOCKER === "true";
+
+/** Where users are pointed to request local Docker support. */
+export const LOCAL_DOCKER_CONTACT_URL = "https://www.americaneagle.com";

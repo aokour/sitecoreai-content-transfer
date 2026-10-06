@@ -26,7 +26,6 @@ import { useLocalDockerEnvironments } from "@/hooks/use-local-docker-environment
 import type { LocalDockerEnvironmentEntry } from "@/lib/content-transfer";
 import { decodeJwtExpiry } from "@/lib/environment-client/docker-auth";
 import { checkDockerConnection } from "@/lib/environment-client/docker-health-check";
-import { ALLOW_LOCAL_DOCKER_DESTINATION } from "@/lib/feature-flags";
 import {
   Check,
   CheckCircle2,
@@ -244,9 +243,8 @@ export function LocalEnvironmentSettings({
         </DialogHeader>
 
         <p className="text-xs text-muted-foreground -mt-2">
-          {ALLOW_LOCAL_DOCKER_DESTINATION
-            ? "Usable as a transfer/backup source or destination in this build."
-            : "Currently usable as a transfer/backup source only. Using a local Docker environment as a destination needs additional Azure Blob Storage configuration on the container."}
+          Usable as a transfer/backup source or destination. Using one as a
+          destination needs Azure Blob Storage configured on the container.
         </p>
 
         <div className="min-w-0 space-y-4">
