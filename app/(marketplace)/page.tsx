@@ -33,8 +33,8 @@ export default function Dashboard() {
                 Manage SitecoreAI content
               </h1>
               <p className="text-sm text-muted-foreground mt-1">
-                Transfer content directly between environments, or use a
-                local backup package that you can restore later.
+                Transfer content directly between environments, or use a local
+                backup package that you can restore later.
               </p>
             </div>
           </div>
@@ -98,7 +98,7 @@ export default function Dashboard() {
                 </p>
               </div>
               <Button size="sm" variant="outline" className="w-fit" asChild>
-                <Link href="/backup/new">
+                <Link href="/backup/new" prefetch={false}>
                   Start backup
                   <ArrowRight className="size-4 ml-2" />
                 </Link>
@@ -116,7 +116,7 @@ export default function Dashboard() {
                 </p>
               </div>
               <Button size="sm" variant="outline" className="w-fit" asChild>
-                <Link href="/restore/new">
+                <Link href="/restore/new" prefetch={false}>
                   Start restore
                   <ArrowRight className="size-4 ml-2" />
                 </Link>

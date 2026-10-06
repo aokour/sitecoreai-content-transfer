@@ -45,7 +45,7 @@ export function WizardShell({
     <div className="flex min-h-screen bg-background">
       <aside className="w-64 shrink-0 border-r bg-card flex flex-col px-6 py-6 gap-5 sticky top-0 h-screen overflow-y-auto">
         <Button variant="ghost" size="sm" className="w-fit -ml-2" asChild>
-          <Link href="/">
+          <Link href="/" prefetch={false}>
             <ArrowLeft className="size-4 mr-2" />
             Dashboard
           </Link>
